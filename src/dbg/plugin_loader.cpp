@@ -200,6 +200,7 @@ bool pluginload(const char* pluginName, bool loadall)
     regExport("CBADDRINFO", CB_ADDRINFO);
     regExport("CBVALFROMSTRING", CB_VALFROMSTRING);
     regExport("CBVALTOSTRING", CB_VALTOSTRING);
+    regExport("CBMENUPREPARE", CB_MENUPREPARE);
 
     SectionLocker<LockPluginMenuList, false> menuLock; //exclusive lock
 
@@ -352,7 +353,7 @@ bool pluginunload(const char* pluginName, bool unloadall)
         }
         {
             EXCLUSIVE_ACQUIRE(LockPluginList);
-            pluginmenuclear(currentPlugin.hMenu);
+            pluginmenuclear(currentPlugin.hMenu, true);
 
             //remove from main pluginlist. We do this so unloadall doesn't try to unload an already released plugin
             auto pbegin = pluginList.begin();
@@ -403,6 +404,7 @@ void pluginloadall(const char* pluginDir)
         pluginload(StringUtils::Utf16ToUtf8(foundData.cFileName).c_str(), true);
     }
     while(FindNextFileW(hSearch, &foundData));
+    FindClose(hSearch);
     SetCurrentDirectoryW(currentDir);
 }
 
@@ -672,7 +674,7 @@ bool pluginmenuaddseparator(int hMenu)
 \param hMenu The menu to clear.
 \return true if it succeeds, false otherwise.
 */
-bool pluginmenuclear(int hMenu)
+bool pluginmenuclear(int hMenu, bool erase)
 {
     EXCLUSIVE_ACQUIRE(LockPluginMenuList);
     bool bFound = false;
@@ -681,7 +683,8 @@ bool pluginmenuclear(int hMenu)
         const auto & currentMenu = *it;
         if(currentMenu.hEntryMenu == hMenu && currentMenu.hEntryPlugin == -1)
         {
-            it = pluginMenuList.erase(it);
+            if(erase)
+                it = pluginMenuList.erase(it);
             bFound = true;
         }
     }

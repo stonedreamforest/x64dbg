@@ -118,6 +118,7 @@ public slots:
     void copyTokenTextSlot();
     void copyTokenValueSlot();
     void followInMemoryMapSlot();
+    void downloadCurrentSymbolsSlot();
 
 protected:
     void paintEvent(QPaintEvent* event);

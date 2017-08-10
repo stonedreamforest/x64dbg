@@ -412,6 +412,12 @@ extern "C" DLL_EXPORT bool _dbg_addrinfoget(duint addr, SEGMENTREG segment, BRID
                         temp_string.push_back(':');
                         temp_string.append(string_text);
                     }
+                    else if(*newinfo.label)
+                    {
+                        temp_string = instr.arg[i].mnemonic;
+                        temp_string.push_back(':');
+                        temp_string.append(newinfo.label);
+                    }
                 }
                 else
                     continue;
@@ -1431,6 +1437,13 @@ extern "C" DLL_EXPORT duint _dbg_sendmessage(DBGMSG type, void* param1, void* pa
     }
     break;
 
+    case DBG_MENU_PREPARE:
+    {
+        PLUG_CB_MENUPREPARE info;
+        info.hMenu = int(param1);
+        plugincbcall(CB_MENUPREPARE, &info);
+    }
+    break;
     }
     return 0;
 }
