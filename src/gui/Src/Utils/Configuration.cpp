@@ -67,6 +67,7 @@ Configuration::Configuration() : QObject(), noMoreMsgbox(false)
     defaultColors.insert("DisassemblyByteFFBackgroundColor", Qt::transparent);
     defaultColors.insert("DisassemblyByteIsPrintColor", QColor("#800080"));
     defaultColors.insert("DisassemblyByteIsPrintBackgroundColor", Qt::transparent);
+    defaultColors.insert("DisassemblyRelocationUnderlineColor", QColor("#000000"));
     defaultColors.insert("DisassemblyCommentColor", QColor("#000000"));
     defaultColors.insert("DisassemblyCommentBackgroundColor", Qt::transparent);
     defaultColors.insert("DisassemblyAutoCommentColor", QColor("#AA5500"));
@@ -232,6 +233,11 @@ Configuration::Configuration() : QObject(), noMoreMsgbox(false)
     defaultColors.insert("StructAlternateBackgroundColor", QColor("#DCD9CF"));
     defaultColors.insert("LogLinkColor", QColor("#00CC00"));
     defaultColors.insert("LogLinkBackgroundColor", Qt::transparent);
+    defaultColors.insert("BreakpointSummaryParenColor", Qt::red);
+    defaultColors.insert("BreakpointSummaryKeywordColor", QColor("#8B671F"));
+    defaultColors.insert("BreakpointSummaryStringColor", QColor("#008000"));
+
+    defaultColors.insert("PatchRelocatedByteHighlightColor", QColor("#0000DD"));
 
     //bool settings
     QMap<QString, bool> disassemblyBool;
@@ -289,11 +295,7 @@ Configuration::Configuration() : QObject(), noMoreMsgbox(false)
     for(int i = 1; i <= 5; i++)
         AbstractTableView::setupColumnConfigDefaultValue(guiUint, QString("CPUDump%1").arg(i), 4);
     AbstractTableView::setupColumnConfigDefaultValue(guiUint, "Watch1", 6);
-    AbstractTableView::setupColumnConfigDefaultValue(guiUint, "SoftwareBreakpoint", 10);
-    AbstractTableView::setupColumnConfigDefaultValue(guiUint, "HardwareBreakpoint", 10);
-    AbstractTableView::setupColumnConfigDefaultValue(guiUint, "MemoryBreakpoint", 10);
-    AbstractTableView::setupColumnConfigDefaultValue(guiUint, "DLLBreakpoint", 8);
-    AbstractTableView::setupColumnConfigDefaultValue(guiUint, "ExceptionBreakpoint", 8);
+    AbstractTableView::setupColumnConfigDefaultValue(guiUint, "BreakpointsView", 7);
     AbstractTableView::setupColumnConfigDefaultValue(guiUint, "MemoryMap", 8);
     AbstractTableView::setupColumnConfigDefaultValue(guiUint, "CallStack", 6);
     AbstractTableView::setupColumnConfigDefaultValue(guiUint, "SEH", 4);
@@ -450,6 +452,9 @@ Configuration::Configuration() : QObject(), noMoreMsgbox(false)
     defaultShortcuts.insert("ActionToggleBookmark", Shortcut({tr("Actions"), tr("Toggle Bookmark")}, "Ctrl+D"));
     defaultShortcuts.insert("ActionDeleteBreakpoint", Shortcut({tr("Actions"), tr("Delete Breakpoint")}, "Delete"));
     defaultShortcuts.insert("ActionEnableDisableBreakpoint", Shortcut({tr("Actions"), tr("Enable/Disable Breakpoint")}, "Space"));
+    defaultShortcuts.insert("ActionResetHitCountBreakpoint", Shortcut({tr("Actions"), tr("Reset breakpoint hit count")}));
+    defaultShortcuts.insert("ActionEnableAllBreakpoints", Shortcut({tr("Actions"), tr("Enable all breakpoints")}));
+    defaultShortcuts.insert("ActionDisableAllBreakpoints", Shortcut({tr("Actions"), tr("Disable all breakpoints")}));
 
     defaultShortcuts.insert("ActionBinaryEdit", Shortcut({tr("Actions"), tr("Binary Edit")}, "Ctrl+E"));
     defaultShortcuts.insert("ActionBinaryFill", Shortcut({tr("Actions"), tr("Binary Fill")}, "F"));
