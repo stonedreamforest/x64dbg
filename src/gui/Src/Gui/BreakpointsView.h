@@ -48,6 +48,8 @@ private:
     };
 
     std::unordered_map<duint, const char*> mExceptionMap;
+    QStringList mExceptionList;
+    int mExceptionMaxLength;
     std::vector<BRIDGEBP> mBps;
     std::vector<std::pair<RichTextPainter::List, RichTextPainter::List>> mRich;
     QColor mDisasmBackgroundColor;
@@ -67,14 +69,17 @@ private:
         return mData.at(i).at(ColAddr).userdata;
     }
 
-    const BRIDGEBP & selectedBp()
+    const BRIDGEBP & selectedBp(int index = -1)
     {
-        return mBps.at(bpIndex(getInitialSelection()));
+        if(index == -1)
+            index = getInitialSelection();
+        return mBps.at(bpIndex(index));
     }
 
-    bool isValidBp()
+    bool isValidBp(int sel = -1)
     {
-        auto sel = getInitialSelection();
+        if(sel == -1)
+            sel = getInitialSelection();
         if(!DbgIsDebugging() || mBps.empty() || !isValidIndex(sel, ColType))
             return false;
         auto & bp = mBps.at(bpIndex(sel));

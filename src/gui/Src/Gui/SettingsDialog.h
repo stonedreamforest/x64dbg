@@ -89,6 +89,8 @@ private slots:
     void on_chkUtf16LogRedirect_toggled(bool checked);
     void on_chkShowGraphRva_toggled(bool checked);
     void on_chkUseLocalHelpFile_toggled(bool checked);
+    void on_chkQueryProcessCookie_toggled(bool checked);
+    void on_chkQueryWorkingSet_toggled(bool checked);
 
 private:
     //enums
@@ -180,6 +182,8 @@ private:
         bool miscSymbolCache;
         bool miscUtf16LogRedirect;
         bool miscUseLocalHelpFile;
+        bool miscQueryProcessCookie;
+        bool miscQueryWorkingSet;
     };
 
     //variables
