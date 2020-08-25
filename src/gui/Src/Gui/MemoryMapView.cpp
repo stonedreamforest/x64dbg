@@ -5,8 +5,6 @@
 #include "Configuration.h"
 #include "Bridge.h"
 #include "PageMemoryRights.h"
-#include "YaraRuleSelectionDialog.h"
-#include "EntropyDialog.h"
 #include "HexEditDialog.h"
 #include "MiscUtil.h"
 #include "GotoDialog.h"
@@ -20,16 +18,17 @@ MemoryMapView::MemoryMapView(StdTable* parent)
 {
     setDrawDebugOnly(true);
     enableMultiSelection(true);
+    setDisassemblyPopupEnabled(false);
 
     int charwidth = getCharWidth();
 
-    addColumnAt(8 + charwidth * 2 * sizeof(duint), tr("Address"), false, tr("Address")); //addr
+    addColumnAt(8 + charwidth * 2 * sizeof(duint), tr("Address"), true, tr("Address")); //addr
     addColumnAt(8 + charwidth * 2 * sizeof(duint), tr("Size"), false, tr("Size")); //size
     addColumnAt(8 + charwidth * 32, tr("Info"), false, tr("Page Information")); //page information
     addColumnAt(8 + charwidth * 28, tr("Content"), false, tr("Content of section")); //content of section
-    addColumnAt(8 + charwidth * 5, tr("Type"), false, tr("Allocation Type")); //allocation type
-    addColumnAt(8 + charwidth * 11, tr("Protection"), false, tr("Current Protection")); //current protection
-    addColumnAt(8 + charwidth * 8, tr("Initial"), false, tr("Allocation Protection")); //allocation protection
+    addColumnAt(8 + charwidth * 5, tr("Type"), true, tr("Allocation Type")); //allocation type
+    addColumnAt(8 + charwidth * 11, tr("Protection"), true, tr("Current Protection")); //current protection
+    addColumnAt(8 + charwidth * 8, tr("Initial"), true, tr("Allocation Protection")); //allocation protection
     loadColumnFromConfig("MemoryMap");
 
     connect(Bridge::getBridge(), SIGNAL(updateMemory()), this, SLOT(refreshMap()));
@@ -55,12 +54,6 @@ void MemoryMapView::setupContextMenu()
     connect(this, SIGNAL(enterPressedSignal()), this, SLOT(doubleClickedSlot()));
     connect(this, SIGNAL(doubleClickedSignal()), this, SLOT(doubleClickedSlot()));
 
-    //Yara
-    mYara = new QAction(DIcon("yara.png"), "&Yara...", this);
-    mYara->setShortcutContext(Qt::WidgetShortcut);
-    this->addAction(mYara);
-    connect(mYara, SIGNAL(triggered()), this, SLOT(yaraSlot()));
-
     //Set PageMemory Rights
     mPageMemoryRights = new QAction(DIcon("memmap_set_page_memory_rights.png"), tr("Set Page Memory Rights"), this);
     connect(mPageMemoryRights, SIGNAL(triggered()), this, SLOT(pageMemoryRights()));
@@ -84,6 +77,17 @@ void MemoryMapView::setupContextMenu()
     mMemoryAccessMenu->addAction(mMemoryAccessRestore);
     mBreakpointMenu->addMenu(mMemoryAccessMenu);
 
+    //Breakpoint->Memory Read
+    mMemoryReadMenu = new QMenu(tr("Read"), this);
+    mMemoryReadMenu->setIcon(DIcon("breakpoint_memory_read.png"));
+    mMemoryReadSingleshoot = new QAction(DIcon("breakpoint_memory_singleshoot.png"), tr("&Singleshoot"), this);
+    makeCommandAction(mMemoryReadSingleshoot, "bpm $, 0, r");
+    mMemoryReadMenu->addAction(mMemoryReadSingleshoot);
+    mMemoryReadRestore = new QAction(DIcon("breakpoint_memory_restore_on_hit.png"), tr("&Restore"), this);
+    makeCommandAction(mMemoryReadRestore, "bpm $, 1, r");
+    mMemoryReadMenu->addAction(mMemoryReadRestore);
+    mBreakpointMenu->addMenu(mMemoryReadMenu);
+
     //Breakpoint->Memory Write
     mMemoryWriteMenu = new QMenu(tr("Write"), this);
     mMemoryWriteMenu->setIcon(DIcon("breakpoint_memory_write.png"));
@@ -99,7 +103,6 @@ void MemoryMapView::setupContextMenu()
     mMemoryExecuteMenu = new QMenu(tr("Execute"), this);
     mMemoryExecuteMenu->setIcon(DIcon("breakpoint_memory_execute.png"));
     mMemoryExecuteSingleshoot = new QAction(DIcon("breakpoint_memory_singleshoot.png"), tr("&Singleshoot"), this);
-    mMemoryExecuteSingleshoot->setShortcutContext(Qt::WidgetShortcut);
     makeCommandAction(mMemoryExecuteSingleshoot, "bpm $, 0, x");
     mMemoryExecuteMenu->addAction(mMemoryExecuteSingleshoot);
     mMemoryExecuteRestore = new QAction(DIcon("breakpoint_memory_restore_on_hit.png"), tr("&Restore"), this);
@@ -112,7 +115,6 @@ void MemoryMapView::setupContextMenu()
     mMemoryRemove->setShortcutContext(Qt::WidgetShortcut);
     makeCommandAction(mMemoryRemove, "bpmc $");
     mBreakpointMenu->addAction(mMemoryRemove);
-    this->addAction(mMemoryRemove);
 
     //Action shortcut action that does something
     mMemoryExecuteSingleshootToggle = new QAction(this);
@@ -150,12 +152,6 @@ void MemoryMapView::setupContextMenu()
     this->addAction(mGotoExpression);
     mGotoMenu->addAction(mGotoExpression);
 
-    //Entropy
-    mEntropy = new QAction(DIcon("entropy.png"), tr("Entropy..."), this);
-    mEntropy->setShortcutContext(Qt::WidgetShortcut);
-    this->addAction(mEntropy);
-    connect(mEntropy, SIGNAL(triggered()), this, SLOT(entropy()));
-
     //Find
     mFindPattern = new QAction(DIcon("search-for.png"), tr("&Find Pattern..."), this);
     this->addAction(mFindPattern);
@@ -170,11 +166,18 @@ void MemoryMapView::setupContextMenu()
     mAddVirtualMod = new QAction(DIcon("virtual.png"), tr("Add virtual module"), this);
     connect(mAddVirtualMod, SIGNAL(triggered()), this, SLOT(addVirtualModSlot()));
 
+    //References
+    mReferences = new QAction(DIcon("find.png"), tr("Find references to region"), this);
+    connect(mReferences, SIGNAL(triggered()), this, SLOT(findReferencesSlot()));
+
     //Comment
     mComment = new QAction(DIcon("comment.png"), tr("&Comment"), this);
     this->addAction(mComment);
     connect(mComment, SIGNAL(triggered()), this, SLOT(commentSlot()));
     mComment->setShortcutContext(Qt::WidgetShortcut);
+
+    mPluginMenu = new QMenu(this);
+    Bridge::getBridge()->emitMenuAddToList(this, mPluginMenu, GUI_MEMMAP_MENU);
 
     refreshShortcutsSlot();
     connect(Config(), SIGNAL(shortcutsUpdated()), this, SLOT(refreshShortcutsSlot()));
@@ -188,10 +191,8 @@ void MemoryMapView::refreshShortcutsSlot()
     mFindPattern->setShortcut(ConfigShortcut("ActionFindPattern"));
     mGotoOrigin->setShortcut(ConfigShortcut("ActionGotoOrigin"));
     mGotoExpression->setShortcut(ConfigShortcut("ActionGotoExpression"));
-    mEntropy->setShortcut(ConfigShortcut("ActionEntropy"));
     mMemoryFree->setShortcut(ConfigShortcut("ActionFreeMemory"));
     mMemoryAllocate->setShortcut(ConfigShortcut("ActionAllocateMemory"));
-    mYara->setShortcut(ConfigShortcut("ActionYara"));
     mComment->setShortcut(ConfigShortcut("ActionSetComment"));
 }
 
@@ -204,10 +205,9 @@ void MemoryMapView::contextMenuSlot(const QPoint & pos)
     wMenu.addAction(mFollowDump);
     wMenu.addAction(mDumpMemory);
     wMenu.addAction(mComment);
-    wMenu.addAction(mYara);
-    wMenu.addAction(mEntropy);
     wMenu.addAction(mFindPattern);
     wMenu.addAction(mSwitchView);
+    wMenu.addAction(mReferences);
     wMenu.addSeparator();
     wMenu.addAction(mMemoryAllocate);
     wMenu.addAction(mMemoryFree);
@@ -217,6 +217,9 @@ void MemoryMapView::contextMenuSlot(const QPoint & pos)
     wMenu.addAction(mPageMemoryRights);
     wMenu.addSeparator();
     wMenu.addMenu(mBreakpointMenu);
+    wMenu.addSeparator();
+    DbgMenuPrepare(GUI_MEMMAP_MENU);
+    wMenu.addActions(mPluginMenu->actions());
     QMenu wCopyMenu(tr("&Copy"), this);
     wCopyMenu.setIcon(DIcon("copy.png"));
     setupCopyMenu(&wCopyMenu);
@@ -235,6 +238,7 @@ void MemoryMapView::contextMenuSlot(const QPoint & pos)
     if((DbgGetBpxTypeAt(selectedAddr) & bp_memory) == bp_memory) //memory breakpoint set
     {
         mMemoryAccessMenu->menuAction()->setVisible(false);
+        mMemoryReadMenu->menuAction()->setVisible(false);
         mMemoryWriteMenu->menuAction()->setVisible(false);
         mMemoryExecuteMenu->menuAction()->setVisible(false);
         mMemoryRemove->setVisible(true);
@@ -242,6 +246,7 @@ void MemoryMapView::contextMenuSlot(const QPoint & pos)
     else //memory breakpoint not set
     {
         mMemoryAccessMenu->menuAction()->setVisible(true);
+        mMemoryReadMenu->menuAction()->setVisible(true);
         mMemoryWriteMenu->menuAction()->setVisible(true);
         mMemoryExecuteMenu->menuAction()->setVisible(true);
         mMemoryRemove->setVisible(false);
@@ -273,7 +278,7 @@ QString MemoryMapView::paintContent(QPainter* painter, dsint rowBase, int rowOff
 #else //x86
         duint addr = wStr.toULong(0, 16);
 #endif //_WIN64
-        QColor color = textColor;
+        QColor color = mTextColor;
         QColor backgroundColor = Qt::transparent;
         bool isBp = (DbgGetBpxTypeAt(addr) & bp_memory) == bp_memory;
         bool isCip = addr == mCipBase;
@@ -293,7 +298,7 @@ QString MemoryMapView::paintContent(QPainter* painter, dsint rowBase, int rowOff
             backgroundColor = ConfigColor("MemoryMapCipBackgroundColor");
         }
         else if(isSelected(rowBase, rowOffset) == true)
-            painter->fillRect(QRect(x, y, w, h), QBrush(selectionColor));
+            painter->fillRect(QRect(x, y, w, h), QBrush(mSelectionColor));
 
         if(backgroundColor.alpha())
             painter->fillRect(QRect(x, y, w - 1, h), QBrush(backgroundColor));
@@ -409,7 +414,7 @@ void MemoryMapView::refreshMap()
             wS = tr("Exception information");
         else
             wS = QString("");
-        setCellContent(wI, 3, wS);
+        setCellContent(wI, 3, std::move(wS));
 
         // Type
         const char* type = "";
@@ -472,18 +477,6 @@ void MemoryMapView::doubleClickedSlot()
     }
 }
 
-void MemoryMapView::yaraSlot()
-{
-    YaraRuleSelectionDialog yaraDialog(this);
-    if(yaraDialog.exec() == QDialog::Accepted)
-    {
-        QString addr_text = getCellContent(getInitialSelection(), 0);
-        QString size_text = getCellContent(getInitialSelection(), 1);
-        DbgCmdExec(QString("yara \"%0\",%1,%2").arg(yaraDialog.getSelectedFile()).arg(addr_text).arg(size_text).toUtf8().constData());
-        emit showReferences();
-    }
-}
-
 void MemoryMapView::memoryExecuteSingleshootToggleSlot()
 {
     for(int i : getSelection())
@@ -495,9 +488,9 @@ void MemoryMapView::memoryExecuteSingleshootToggleSlot()
         duint selectedAddr = addr_text.toULong(0, 16);
 #endif //_WIN64
         if((DbgGetBpxTypeAt(selectedAddr) & bp_memory) == bp_memory) //memory breakpoint set
-            DbgCmdExec(QString("bpmc ") + selectedAddr);
+            DbgCmdExec(QString("bpmc ") + addr_text);
         else
-            DbgCmdExec(QString("bpm %1, 0, x").arg(selectedAddr));
+            DbgCmdExec(QString("bpm %1, 0, x").arg(addr_text));
     }
 }
 
@@ -519,22 +512,6 @@ void MemoryMapView::switchView()
     setSingleSelection(0);
     setTableOffset(0);
     stateChangedSlot(paused);
-}
-
-void MemoryMapView::entropy()
-{
-    duint addr = getCellContent(getInitialSelection(), 0).toULongLong(0, 16);
-    duint size = getCellContent(getInitialSelection(), 1).toULongLong(0, 16);
-    unsigned char* data = new unsigned char[size];
-    DbgMemRead(addr, data, size);
-
-    EntropyDialog entropyDialog(this);
-    entropyDialog.setWindowTitle(tr("Entropy (Address: %1, Size: %2)").arg(ToPtrString(addr).arg(ToPtrString(size))));
-    entropyDialog.show();
-    entropyDialog.GraphMemory(data, size);
-    entropyDialog.exec();
-
-    delete[] data;
 }
 
 void MemoryMapView::memoryAllocateSlot()
@@ -566,13 +543,19 @@ void MemoryMapView::memoryAllocateSlot()
 void MemoryMapView::findPatternSlot()
 {
     HexEditDialog hexEdit(this);
-    hexEdit.showEntireBlock(true);
+    duint entireBlockEnabled = 0;
+    BridgeSettingGetUint("Gui", "MemoryMapEntireBlock", &entireBlockEnabled);
+    hexEdit.showEntireBlock(true, entireBlockEnabled);
+    hexEdit.showKeepSize(false);
+    hexEdit.isDataCopiable(false);
     hexEdit.mHexEdit->setOverwriteMode(false);
     hexEdit.setWindowTitle(tr("Find Pattern..."));
     if(hexEdit.exec() != QDialog::Accepted)
         return;
     duint addr = getCellContent(getInitialSelection(), 0).toULongLong(0, 16);
-    if(hexEdit.entireBlock())
+    entireBlockEnabled = hexEdit.entireBlock();
+    BridgeSettingSetUint("Gui", "MemoryMapEntireBlock", entireBlockEnabled);
+    if(entireBlockEnabled)
         addr = 0;
     QString addrText = ToPtrString(addr);
     DbgCmdExec(QString("findmemall " + addrText + ", \"" + hexEdit.mHexEdit->pattern() + "\", &data&").toUtf8().constData());
@@ -624,6 +607,7 @@ void MemoryMapView::gotoExpressionSlot()
     if(!mGoto)
         mGoto = new GotoDialog(this);
     mGoto->setWindowTitle(tr("Enter the address to find..."));
+    mGoto->setInitialExpression(ToPtrString(duint(getCellContent(getInitialSelection(), 0).toULongLong(nullptr, 16))));
     if(mGoto->exec() == QDialog::Accepted)
     {
         selectAddress(DbgValFromString(mGoto->expressionText.toUtf8().constData()));
@@ -644,10 +628,18 @@ void MemoryMapView::addVirtualModSlot()
     DbgCmdExec(QString("virtualmod \"%1\", %2, %3").arg(modname).arg(ToHexString(base)).arg(ToHexString(size)).toUtf8().constData());
 }
 
+void MemoryMapView::findReferencesSlot()
+{
+    auto base = duint(getCellContent(getInitialSelection(), 0).toULongLong(nullptr, 16));
+    auto size = duint(getCellContent(getInitialSelection(), 1).toULongLong(nullptr, 16));
+    DbgCmdExec(QString("reffindrange %1, %2, dis.sel()").arg(ToPtrString(base)).arg(ToPtrString(base + size)).toUtf8().constData());
+    emit showReferences();
+}
+
 void MemoryMapView::selectionGetSlot(SELECTIONDATA* selection)
 {
     selection->start = selection->end = duint(getCellContent(getInitialSelection(), 0).toULongLong(nullptr, 16));
-    Bridge::getBridge()->setResult(1);
+    Bridge::getBridge()->setResult(BridgeResult::SelectionGet, 1);
 }
 
 void MemoryMapView::disassembleAtSlot(dsint va, dsint cip)

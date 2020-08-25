@@ -6,11 +6,11 @@ CallStackView::CallStackView(StdTable* parent) : StdTable(parent)
     int charwidth = getCharWidth();
 
     addColumnAt(8 + charwidth * sizeof(dsint) * 2, tr("Address"), true); //address in the stack
-    addColumnAt(8 + charwidth * sizeof(dsint) * 2, tr("To"), true); //return to
-    addColumnAt(8 + charwidth * sizeof(dsint) * 2, tr("From"), true); //return from
-    addColumnAt(8 + charwidth * sizeof(dsint) * 2, tr("Size"), true); //size
-    addColumnAt(50 * charwidth, tr("Comment"), true);
-    addColumnAt(8 * charwidth, tr("Party"), true); //party
+    addColumnAt(8 + charwidth * sizeof(dsint) * 2, tr("To"), false); //return to
+    addColumnAt(8 + charwidth * sizeof(dsint) * 2, tr("From"), false); //return from
+    addColumnAt(8 + charwidth * sizeof(dsint) * 2, tr("Size"), false); //size
+    addColumnAt(50 * charwidth, tr("Comment"), false);
+    addColumnAt(8 * charwidth, tr("Party"), false); //party
     loadColumnFromConfig("CallStack");
 
     connect(Bridge::getBridge(), SIGNAL(updateCallStack()), this, SLOT(updateCallStack()));
@@ -28,11 +28,11 @@ void CallStackView::setupContextMenu()
     });
     QIcon icon = DIcon(ArchValue("processor32.png", "processor64.png"));
     mMenuBuilder->addAction(makeAction(icon, tr("Follow &Address"), SLOT(followAddress())));
-    mMenuBuilder->addAction(makeAction(icon, tr("Follow &To"), SLOT(followTo())), [this](QMenu*)
+    mMenuBuilder->addAction(makeAction(icon, tr("Follow &To"), SLOT(followTo())));
+    QAction* mFollowFrom = mMenuBuilder->addAction(makeAction(icon, tr("Follow &From"), SLOT(followFrom())), [this](QMenu*)
     {
         return !getCellContent(getInitialSelection(), 2).isEmpty();
     });
-    QAction* mFollowFrom = mMenuBuilder->addAction(makeAction(icon, tr("Follow &From"), SLOT(followFrom())));
     mFollowFrom->setShortcutContext(Qt::WidgetShortcut);
     mFollowFrom->setShortcut(QKeySequence("enter"));
     connect(this, SIGNAL(enterPressedSignal()), this, SLOT(followFrom()));
@@ -91,7 +91,7 @@ void CallStackView::updateCallStack()
             setCellContent(i, 5, tr("System"));
             break;
         default:
-            setCellContent(i, 5, QString("%1").arg(party));
+            setCellContent(i, 5, QString::number(party));
             break;
         }
     }

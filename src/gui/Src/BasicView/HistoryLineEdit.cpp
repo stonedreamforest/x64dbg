@@ -37,10 +37,11 @@ void HistoryLineEdit::saveSettings(QString sectionPrefix)
 
 void HistoryLineEdit::addLineToHistory(QString parLine)
 {
-    mCmdHistory.prepend(parLine);
-
     if(mCmdHistory.size() > mCmdHistoryMaxSize)
         mCmdHistory.removeLast();
+
+    if(mCmdHistory.empty() || mCmdHistory.first() != parLine)
+        mCmdHistory.prepend(parLine);
 
     mCmdIndex = -1;
 }
@@ -92,6 +93,7 @@ void HistoryLineEdit::keyPressEvent(QKeyEvent* event)
         // NOTE: "Unlike textChanged(), this signal [textEdited()] is not emitted when
         // the text is changed programmatically, for example, by calling setText()."
         setText(newText);
+        emit textEdited(newText);
     }
 
     QLineEdit::keyPressEvent(event);

@@ -7,7 +7,7 @@
 #include "debugger.h"
 #include "variable.h"
 #include "loop.h"
-#include "capstone_wrapper.h"
+#include "zydis_wrapper.h"
 #include "mnemonichelp.h"
 #include "value.h"
 #include "symbolinfo.h"
@@ -207,7 +207,7 @@ bool cbInstrCopystr(int argc, char* argv[])
     return true;
 }
 
-bool cbInstrCapstone(int argc, char* argv[])
+bool cbInstrZydis(int argc, char* argv[])
 {
     if(IsArgumentsLessThan(argc, 2))
         return false;
@@ -230,73 +230,84 @@ bool cbInstrCapstone(int argc, char* argv[])
         if(!valfromstring(argv[2], &addr, false))
             return false;
 
-    Capstone cp;
+    Zydis cp;
     if(!cp.Disassemble(addr, data))
     {
         dputs_untranslated("Failed to disassemble!\n");
         return false;
     }
 
-    const cs_insn* instr = cp.GetInstr();
-    const cs_detail* detail = instr->detail;
-    const cs_x86 & x86 = cp.x86();
-    int argcount = x86.op_count;
-    dprintf_untranslated("%s %s | %s\n", instr->mnemonic, instr->op_str, cp.InstructionText(true).c_str());
-    dprintf_untranslated("size: %d, id: %d, opcount: %d\n", cp.Size(), cp.GetId(), cp.OpCount());
-    if(detail->regs_read_count)
+    auto instr = cp.GetInstr();
+    int argcount = instr->operandCount;
+    dputs_untranslated(cp.InstructionText(true).c_str());
+    dprintf_untranslated("prefix size: %d\n", instr->raw.prefixes.count);
+    if(instr->raw.rex.isDecoded)
+        dprintf_untranslated("rex.W: %d, rex.R: %d, rex.X: %d, rex.B: %d, rex.data: %02x\n", instr->raw.rex.W, instr->raw.rex.R, instr->raw.rex.X, instr->raw.rex.B, instr->raw.rex.data[0]);
+    dprintf_untranslated("disp.offset: %d, disp.size: %d\n", instr->raw.disp.offset, instr->raw.disp.size);
+    dprintf_untranslated("imm[0].offset: %d, imm[0].size: %d\n", instr->raw.imm[0].offset, instr->raw.imm[0].size);
+    dprintf_untranslated("imm[1].offset: %d, imm[1].size: %d\n", instr->raw.imm[1].offset, instr->raw.imm[1].size);
+    dprintf_untranslated("size: %d, id: %d, opcount: %d\n", cp.Size(), cp.GetId(), instr->operandCount);
+    auto rwstr = [](uint8_t action)
     {
-        dprintf_untranslated("implicit read:");
-        for(uint8_t i = 0; i < detail->regs_read_count; i++)
-            dprintf(" %s", cp.RegName(x86_reg(detail->regs_read[i])));
-        dputs_untranslated("");
-    }
-    if(detail->regs_write_count)
-    {
-        dprintf_untranslated("implicit write:");
-        for(uint8_t i = 0; i < detail->regs_write_count; i++)
-            dprintf(" %s", cp.RegName(x86_reg(detail->regs_write[i])));
-        dputs_untranslated("");
-    }
-    auto rwstr = [](uint8_t access)
-    {
-        switch(access)
+        switch(action)
         {
-        case CS_AC_INVALID:
-            return "none";
-        case CS_AC_READ:
+        case ZYDIS_OPERAND_ACTION_READ:
+        case ZYDIS_OPERAND_ACTION_CONDREAD:
             return "read";
-        case CS_AC_WRITE:
+        case ZYDIS_OPERAND_ACTION_WRITE:
+        case ZYDIS_OPERAND_ACTION_CONDWRITE:
             return "write";
-        case CS_AC_READ | CS_AC_WRITE:
+        case ZYDIS_OPERAND_ACTION_READWRITE:
+        case ZYDIS_OPERAND_ACTION_READ_CONDWRITE:
+        case ZYDIS_OPERAND_ACTION_CONDREAD_WRITE:
             return "read+write";
+        default:
+            return "???";
+        }
+    };
+    auto vis = [](uint8_t visibility)
+    {
+        switch(visibility)
+        {
+        case ZYDIS_OPERAND_VISIBILITY_INVALID:
+            return "invalid";
+        case ZYDIS_OPERAND_VISIBILITY_EXPLICIT:
+            return "explicit";
+        case ZYDIS_OPERAND_VISIBILITY_IMPLICIT:
+            return "implicit";
+        case ZYDIS_OPERAND_VISIBILITY_HIDDEN:
+            return "hidden";
         default:
             return "???";
         }
     };
     for(int i = 0; i < argcount; i++)
     {
-        const cs_x86_op & op = x86.operands[i];
-        dprintf("operand %d (size: %d, access: %s) \"%s\", ", i + 1, op.size, rwstr(op.access), cp.OperandText(i).c_str());
+        const auto & op = instr->operands[i];
+        dprintf("operand %d (size: %d, access: %s, visibility: %s) \"%s\", ", i + 1, op.size, rwstr(op.action), vis(op.visibility), cp.OperandText(i).c_str());
         switch(op.type)
         {
-        case X86_OP_REG:
-            dprintf_untranslated("register: %s\n", cp.RegName((x86_reg)op.reg));
+        case ZYDIS_OPERAND_TYPE_REGISTER:
+            dprintf_untranslated("register: %s\n", cp.RegName(op.reg.value));
             break;
-        case X86_OP_IMM:
-            dprintf_untranslated("immediate: 0x%p\n", op.imm);
+        case ZYDIS_OPERAND_TYPE_IMMEDIATE:
+            dprintf_untranslated("immediate: 0x%p\n", op.imm.value.u);
             break;
-        case X86_OP_MEM:
+        case ZYDIS_OPERAND_TYPE_MEMORY:
         {
             //[base + index * scale +/- disp]
-            const x86_op_mem & mem = op.mem;
+            const auto & mem = op.mem;
             dprintf_untranslated("memory segment: %s, base: %s, index: %s, scale: %d, displacement: 0x%p\n",
                                  cp.RegName(mem.segment),
                                  cp.RegName(mem.base),
                                  cp.RegName(mem.index),
                                  mem.scale,
-                                 mem.disp);
+                                 mem.disp.value);
         }
         break;
+        case ZYDIS_OPERAND_TYPE_POINTER:
+            dprintf_untranslated("pointer: %X:%p\n", op.ptr.segment, op.ptr.offset);
+            break;
         }
     }
 
@@ -324,7 +335,7 @@ bool cbInstrVisualize(int argc, char* argv[])
     //DisassemblyBreakpointColor = #000000
     {
         //initialize
-        Capstone _cp;
+        Zydis _cp;
         duint _base = start;
         duint _size = maxaddr - start;
         Memory<unsigned char*> _data(_size);
@@ -357,10 +368,9 @@ bool cbInstrVisualize(int argc, char* argv[])
                 if(addr + _cp.Size() > maxaddr) //we went past the maximum allowed address
                     break;
 
-                const cs_x86_op & operand = _cp.x86().operands[0];
-                if((_cp.InGroup(CS_GRP_JUMP) || _cp.IsLoop()) && operand.type == X86_OP_IMM) //jump
+                if((_cp.IsJump() || _cp.IsLoop()) && _cp.OpCount() && _cp[0].type == ZYDIS_OPERAND_TYPE_IMMEDIATE) //jump
                 {
-                    duint dest = (duint)operand.imm;
+                    duint dest = (duint)_cp[0].imm.value.u;
 
                     if(dest >= maxaddr) //jump across function boundaries
                     {
@@ -370,12 +380,12 @@ bool cbInstrVisualize(int argc, char* argv[])
                     {
                         fardest = dest;
                     }
-                    else if(end && dest < end && _cp.GetId() == X86_INS_JMP) //save the last JMP backwards
+                    else if(end && dest < end && _cp.GetId() == ZYDIS_MNEMONIC_JMP) //save the last JMP backwards
                     {
                         jumpback = addr;
                     }
                 }
-                else if(_cp.InGroup(CS_GRP_RET)) //possible function end?
+                else if(_cp.IsRet()) //possible function end?
                 {
                     end = addr;
                     if(fardest < addr) //we stop if the farthest JXX destination forward is before this RET
@@ -403,7 +413,7 @@ bool cbInstrMeminfo(int argc, char* argv[])
 {
     if(argc < 3)
     {
-        dputs_untranslated("Usage: meminfo a/r, addr");
+        dputs_untranslated("Usage: meminfo a/r, addr[, size]");
         return false;
     }
     duint addr;
@@ -414,11 +424,17 @@ bool cbInstrMeminfo(int argc, char* argv[])
     }
     if(argv[1][0] == 'a')
     {
-        unsigned char buf = 0;
-        if(!ReadProcessMemory(fdProcessInfo->hProcess, (void*)addr, &buf, sizeof(buf), nullptr))
-            dputs_untranslated("ReadProcessMemory failed!");
-        else
-            dprintf_untranslated("Data: %02X\n", buf);
+        duint size = 1;
+        if(argc > 3 && !valfromstring(argv[3], &size))
+        {
+            dputs_untranslated("Invalid argument");
+            return false;
+        }
+        std::vector<uint8_t> buf;
+        buf.resize(size);
+        SIZE_T NumberOfBytesRead = 0;
+        ReadProcessMemory(fdProcessInfo->hProcess, (const void*)addr, buf.data(), buf.size(), &NumberOfBytesRead);
+        dprintf_untranslated("Data: %s\n", StringUtils::ToHex(buf.data(), NumberOfBytesRead).c_str());
     }
     else if(argv[1][0] == 'r')
     {
@@ -442,7 +458,7 @@ bool cbInstrBriefcheck(int argc, char* argv[])
         return false;
     Memory<unsigned char*> buffer(size + 16);
     DbgMemRead(base, buffer(), size);
-    Capstone cp;
+    Zydis cp;
     std::unordered_set<String> reported;
     for(duint i = 0; i < size;)
     {
@@ -452,7 +468,7 @@ bool cbInstrBriefcheck(int argc, char* argv[])
             continue;
         }
         i += cp.Size();
-        auto mnem = StringUtils::ToLower(cp.MnemonicId());
+        auto mnem = StringUtils::ToLower(cp.Mnemonic());
         auto brief = MnemonicHelp::getBriefDescription(mnem.c_str());
         if(brief.length() || reported.count(mnem))
             continue;
@@ -484,5 +500,24 @@ bool cbInstrAnimateWait(int argc, char* argv[])
     {
         Sleep(1);
     }
+    return true;
+}
+
+#include <lz4/lz4file.h>
+
+bool cbInstrDbdecompress(int argc, char* argv[])
+{
+    if(argc < 2)
+    {
+        dprintf_untranslated("Usage: dbdecompress \"c:\\path\\to\\db\"\n");
+        return false;
+    }
+    auto dbFile = StringUtils::Utf8ToUtf16(argv[1]);
+    if(LZ4_decompress_fileW(dbFile.c_str(), dbFile.c_str()) != LZ4_SUCCESS)
+    {
+        dprintf_untranslated("Failed to decompress '%s'\n", argv[1]);
+        return false;
+    }
+    dprintf_untranslated("Decompressed '%s'\n", argv[1]);
     return true;
 }

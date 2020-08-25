@@ -14,7 +14,7 @@
 @brief RefFind Find reference to the buffer by a given criterion.
 @param Address The base address of the buffer
 @param Size The size of the buffer
-@param Callback The callback that is invoked to identify whether an instruction satisfies the criterion. prototype: bool callback(Capstone* disasm, BASIC_INSTRUCTION_INFO* basicinfo, REFINFO* refinfo)
+@param Callback The callback that is invoked to identify whether an instruction satisfies the criterion. prototype: bool callback(Zydis* disasm, BASIC_INSTRUCTION_INFO* basicinfo, REFINFO* refinfo)
 @param UserData The data that will be passed to Callback
 @param Silent If true, no log will be outputed.
 @param Name The name of the reference criterion. Not null.
@@ -63,7 +63,7 @@ int RefFind(duint Address, duint Size, CBREF Callback, void* UserData, bool Sile
             sprintf_s(fullName, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "%s (Region %p)")), Name, scanStart);
 
         // Initialize disassembler
-        Capstone cp;
+        Zydis cp;
 
         // Allow an "initialization" notice
         refInfo.refcount = 0;
@@ -104,7 +104,7 @@ int RefFind(duint Address, duint Size, CBREF Callback, void* UserData, bool Sile
             sprintf_s(fullName, "%s (%p)", Name, scanStart);
 
         // Initialize disassembler
-        Capstone cp;
+        Zydis cp;
 
         // Allow an "initialization" notice
         refInfo.refcount = 0;
@@ -147,7 +147,7 @@ int RefFind(duint Address, duint Size, CBREF Callback, void* UserData, bool Sile
         }
 
         // Initialize disassembler
-        Capstone cp;
+        Zydis cp;
 
         // Determine the full module
         sprintf_s(fullName, GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "All Modules (%s)")), Name);
@@ -185,7 +185,7 @@ int RefFind(duint Address, duint Size, CBREF Callback, void* UserData, bool Sile
     return refInfo.refcount;
 }
 
-int RefFindInRange(duint scanStart, duint scanSize, CBREF Callback, void* UserData, bool Silent, REFINFO & refInfo, Capstone & cp, bool initCallBack, const CBPROGRESS & cbUpdateProgress, bool disasmText)
+int RefFindInRange(duint scanStart, duint scanSize, CBREF Callback, void* UserData, bool Silent, REFINFO & refInfo, Zydis & cp, bool initCallBack, const CBPROGRESS & cbUpdateProgress, bool disasmText)
 {
     // Allocate and read a buffer from the remote process
     Memory<unsigned char*> data(scanSize, "reffind:data");
@@ -196,11 +196,13 @@ int RefFindInRange(duint scanStart, duint scanSize, CBREF Callback, void* UserDa
     if(initCallBack)
         Callback(0, 0, &refInfo);
 
+    auto percentCount = scanSize / 500;
+
     //concurrency::parallel_for(duint (0), scanSize, [&](duint i)
     for(duint i = 0; i < scanSize;)
     {
-        // Print the progress every 4096 bytes
-        if((i % 0x1000) == 0)
+        // Print the progress every percent
+        if((i % percentCount) == 0)
         {
             // Percent = (current / total) * 100
             // Integer = floor(percent)

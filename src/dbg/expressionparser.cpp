@@ -191,6 +191,8 @@ void ExpressionParser::tokenize()
         {
             if(stateMemory)
                 stateMemory--;
+            else
+                mIsValidExpression = false;
             mCurToken.push_back(ch);
         }
         break;
@@ -425,10 +427,10 @@ void ExpressionParser::shuntingYard()
                     break;
                 queue.push_back(curToken);
             }
-            const auto & top = stack[stack.size() - 1];
-            if(!stack.empty() && top.type() == Token::Type::Function) //If the token at the top of the stack is a function token, pop it onto the output queue.
+            auto size = stack.size();
+            if(size && stack[size - 1].type() == Token::Type::Function) //If the token at the top of the stack is a function token, pop it onto the output queue.
             {
-                queue.push_back(top);
+                queue.push_back(stack[size - 1]);
                 stack.pop_back();
             }
         }

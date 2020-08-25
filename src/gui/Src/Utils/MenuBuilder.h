@@ -6,7 +6,7 @@
 #include <functional>
 
 /**
- * @brief The MenuBuilder class implements the dynamical context menu system for many views.
+ * @brief The MenuBuilder class implements the dynamic context menu system for many views.
  */
 class MenuBuilder : public QObject
 {
@@ -108,7 +108,7 @@ private:
         union
         {
             QAction* action;
-            QMenu* menu ;
+            QMenu* menu;
             MenuBuilder* builder;
         };
     };

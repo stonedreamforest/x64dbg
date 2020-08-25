@@ -1,6 +1,8 @@
 #include "XrefBrowseDialog.h"
 #include "ui_XrefBrowseDialog.h"
 #include "StringUtil.h"
+#include "MiscUtil.h"
+#include "MenuBuilder.h"
 
 XrefBrowseDialog::XrefBrowseDialog(QWidget* parent) :
     QDialog(parent),
@@ -37,15 +39,15 @@ QString XrefBrowseDialog::GetFunctionSymbol(duint addr)
     return line;
 }
 
-void XrefBrowseDialog::setup(duint address, QString command)
+void XrefBrowseDialog::setup(duint address, GotoFunction gotoFunction)
 {
     if(mXrefInfo.refcount)
     {
         BridgeFree(mXrefInfo.references);
         mXrefInfo.refcount = 0;
     }
-    mCommand = command;
     mAddress = address;
+    mGotoFunction = std::move(gotoFunction);
     mPrevSelectionSize = 0;
     ui->listWidget->clear();
     if(DbgXrefGet(address, &mXrefInfo))
@@ -56,7 +58,10 @@ void XrefBrowseDialog::setup(duint address, QString command)
 
         std::sort(data.begin(), data.end(), [](const XREF_RECORD A, const XREF_RECORD B)
         {
-            return ((A.type < B.type) || (A.addr < B.addr));
+            if(A.type != B.type)
+                return (A.type < B.type);
+
+            return (A.addr < B.addr);
         });
 
         for(duint i = 0; i < mXrefInfo.refcount; i++)
@@ -156,7 +161,7 @@ void XrefBrowseDialog::setupContextMenu()
 
 void XrefBrowseDialog::changeAddress(duint address)
 {
-    DbgCmdExec(QString("%1 %2").arg(mCommand, ToPtrString(address)).toUtf8().constData());
+    mGotoFunction(address);
 }
 
 XrefBrowseDialog::~XrefBrowseDialog()
@@ -198,7 +203,7 @@ void XrefBrowseDialog::on_listWidget_currentRowChanged(int row)
 void XrefBrowseDialog::on_XrefBrowseDialog_rejected()
 {
     if(DbgIsDebugging())
-        DbgCmdExec(QString("%1 %2").arg(mCommand, ToPtrString(mAddress)).toUtf8().constData());
+        mGotoFunction(mAddress);
 }
 
 void XrefBrowseDialog::on_listWidget_itemClicked(QListWidgetItem*)

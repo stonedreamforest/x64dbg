@@ -2,6 +2,8 @@
 #include <QMessageBox>
 #include <QFileDialog>
 #include <QDesktopServices>
+#include <QClipboard>
+#include <QMimeData>
 #include "Configuration.h"
 #include "Bridge.h"
 #include "RichTextPainter.h"
@@ -14,6 +16,7 @@ ScriptView::ScriptView(StdTable* parent) : StdTable(parent)
     enableMultiSelection(false);
     enableColumnSorting(false);
     setDrawDebugOnly(false);
+    setDisassemblyPopupEnabled(false);
 
     int charwidth = getCharWidth();
 
@@ -37,6 +40,10 @@ ScriptView::ScriptView(StdTable* parent) : StdTable(parent)
     connect(mMRUList, SIGNAL(openFile(QString)), this, SLOT(openRecentFile(QString)));
     mMRUList->load();
 
+    // command line edit dialog
+    mCmdLineEdit = new LineEditDialog(this);
+    mCmdLineEdit->setWindowTitle(tr("Execute Script Command..."));
+
     // Slots
     connect(Bridge::getBridge(), SIGNAL(scriptAdd(int, const char**)), this, SLOT(add(int, const char**)));
     connect(Bridge::getBridge(), SIGNAL(scriptClear()), this, SLOT(clear()));
@@ -57,8 +64,8 @@ void ScriptView::updateColors()
 {
     StdTable::updateColors();
 
-    selectionColor = ConfigColor("DisassemblySelectionColor");
-    backgroundColor = ConfigColor("DisassemblyBackgroundColor");
+    mSelectionColor = ConfigColor("DisassemblySelectionColor");
+    mBackgroundColor = ConfigColor("DisassemblyBackgroundColor");
 }
 
 QString ScriptView::paintContent(QPainter* painter, dsint rowBase, int rowOffset, int col, int x, int y, int w, int h)
@@ -66,7 +73,7 @@ QString ScriptView::paintContent(QPainter* painter, dsint rowBase, int rowOffset
     bool wIsSelected = isSelected(rowBase, rowOffset);
     // Highlight if selected
     if(wIsSelected)
-        painter->fillRect(QRect(x, y, w, h), QBrush(selectionColor)); //ScriptViewSelectionColor
+        painter->fillRect(QRect(x, y, w, h), QBrush(mSelectionColor)); //ScriptViewSelectionColor
     QString returnString;
     int line = rowBase + rowOffset + 1;
     SCRIPTLINETYPE linetype = DbgScriptGetLineType(line);
@@ -123,7 +130,7 @@ QString ScriptView::paintContent(QPainter* painter, dsint rowBase, int rowOffset
             int xadd = charwidth; //for testing
             RichTextPainter::List richText;
             RichTextPainter::CustomRichText_t newRichText;
-            newRichText.highlight = false;
+            newRichText.underline = false;
             QString command = getCellContent(rowBase + rowOffset, col);
 
             //handle comments
@@ -289,7 +296,7 @@ QString ScriptView::paintContent(QPainter* painter, dsint rowBase, int rowOffset
             if(comment.length())
             {
                 RichTextPainter::CustomRichText_t newRichText;
-                newRichText.highlight = false;
+                newRichText.underline = false;
                 newRichText.flags = RichTextPainter::FlagNone;
                 newRichText.text = " ";
                 richText.push_back(newRichText); //space
@@ -376,7 +383,10 @@ void ScriptView::setupContextMenu()
     mMenu = new MenuBuilder(this);
     MenuBuilder* loadMenu = new MenuBuilder(this);
     loadMenu->addAction(makeShortcutAction(DIcon("folder-horizontal-open.png"), tr("&Open..."), SLOT(openFile()), "ActionLoadScript"));
-    loadMenu->addAction(makeShortcutAction(DIcon("binary_paste.png"), tr("&Paste"), SLOT(paste()), "ActionBinaryPaste"));
+    loadMenu->addAction(makeShortcutAction(DIcon("binary_paste.png"), tr("&Paste"), SLOT(paste()), "ActionBinaryPaste"), [](QMenu*)
+    {
+        return QApplication::clipboard()->mimeData()->hasText();
+    });
     loadMenu->addSeparator();
     loadMenu->addBuilder(new MenuBuilder(this, [this](QMenu * menu)
     {
@@ -388,9 +398,13 @@ void ScriptView::setupContextMenu()
     {
         return getRowCount() != 0;
     };
-    mMenu->addAction(makeShortcutAction(DIcon("arrow-restart.png"), tr("Re&load Script"), SLOT(reload()), "ActionReloadScript"), isempty);
+    auto isemptyclipboard = [this](QMenu*)
+    {
+        return getRowCount() != 0 && !filename.isEmpty();
+    };
+    mMenu->addAction(makeShortcutAction(DIcon("arrow-restart.png"), tr("Re&load Script"), SLOT(reload()), "ActionReloadScript"), isemptyclipboard);
     mMenu->addAction(makeShortcutAction(DIcon("control-exit.png"), tr("&Unload Script"), SLOT(unload()), "ActionUnloadScript"), isempty);
-    mMenu->addAction(makeShortcutAction(DIcon("edit-script.png"), tr("&Edit Script"), SLOT(edit()), "ActionEditScript"), isempty);
+    mMenu->addAction(makeShortcutAction(DIcon("edit-script.png"), tr("&Edit Script"), SLOT(edit()), "ActionEditScript"), isemptyclipboard);
     mMenu->addSeparator();
     mMenu->addAction(makeShortcutAction(DIcon("breakpoint_toggle.png"), tr("Toggle &BP"), SLOT(bpToggle()), "ActionToggleBreakpointScript"), isempty);
     mMenu->addAction(makeShortcutAction(DIcon("arrow-run-cursor.png"), tr("Ru&n until selection"), SLOT(runCursor()), "ActionRunToCursorScript"), isempty);
@@ -428,7 +442,7 @@ void ScriptView::add(int count, const char** lines)
         setCellContent(i, 1, QString(lines[i]));
     BridgeFree(lines);
     reloadData(); //repaint
-    Bridge::getBridge()->setResult(1);
+    Bridge::getBridge()->setResult(BridgeResult::ScriptAdd, 1);
 }
 
 void ScriptView::clear()
@@ -460,6 +474,7 @@ void ScriptView::error(int line, QString message)
     msg->setIcon(QMessageBox::Critical);
     msg->setWindowTitle(title);
     msg->setText(message);
+    msg->setStandardButtons(QMessageBox::Ok);
     msg->setWindowIcon(DIcon("script-error.png"));
     msg->show();
 }
@@ -502,7 +517,8 @@ void ScriptView::paste()
 
 void ScriptView::reload()
 {
-    openRecentFile(filename);
+    if(!filename.isEmpty())
+        openRecentFile(filename);
 }
 
 void ScriptView::unload()
@@ -558,11 +574,9 @@ void ScriptView::abort()
 
 void ScriptView::cmdExec()
 {
-    LineEditDialog mLineEdit(this);
-    mLineEdit.setWindowTitle(tr("Execute Script Command..."));
-    if(mLineEdit.exec() != QDialog::Accepted)
+    if(mCmdLineEdit->exec() != QDialog::Accepted)
         return;
-    if(!DbgScriptCmdExec(mLineEdit.editText.toUtf8().constData()))
+    if(!DbgScriptCmdExec(mCmdLineEdit->editText.toUtf8().constData()))
         error(0, tr("Error executing command!"));
 }
 
@@ -602,7 +616,7 @@ void ScriptView::enableHighlighting(bool enable)
 
 void ScriptView::messageResult(int result)
 {
-    Bridge::getBridge()->setResult(result == QMessageBox::Yes);
+    Bridge::getBridge()->setResult(BridgeResult::ScriptMessage, result == QMessageBox::Yes);
 }
 
 void ScriptView::closeSlot()

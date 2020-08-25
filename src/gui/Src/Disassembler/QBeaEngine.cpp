@@ -6,7 +6,7 @@
 QBeaEngine::QBeaEngine(int maxModuleSize)
     : _tokenizer(maxModuleSize), mCodeFoldingManager(nullptr), _bLongDataInst(false)
 {
-    CapstoneTokenizer::UpdateColors();
+    ZydisTokenizer::UpdateColors();
     UpdateDataInstructionMap();
     this->mEncodeMap = new EncodeMap();
 }
@@ -28,14 +28,14 @@ QBeaEngine::~QBeaEngine()
  *
  * @return      Return the RVA (Relative to the data pointer) of the nth instruction before the instruction pointed by ip
  */
-ulong QBeaEngine::DisassembleBack(byte_t* data, duint base, duint size, duint ip, int n)
+ulong QBeaEngine::DisassembleBack(const byte_t* data, duint base, duint size, duint ip, int n)
 {
     int i;
     uint abuf[128], addr, back, cmdsize;
-    unsigned char* pdata;
+    const unsigned char* pdata;
 
     // Reset Disasm Structure
-    Capstone cp;
+    Zydis cp;
 
     // Check if the pointer is not null
     if(data == NULL)
@@ -124,14 +124,14 @@ ulong QBeaEngine::DisassembleBack(byte_t* data, duint base, duint size, duint ip
  *
  * @return      Return the RVA (Relative to the data pointer) of the nth instruction after the instruction pointed by ip
  */
-ulong QBeaEngine::DisassembleNext(byte_t* data, duint base, duint size, duint ip, int n)
+ulong QBeaEngine::DisassembleNext(const byte_t* data, duint base, duint size, duint ip, int n)
 {
     int i;
     uint cmdsize;
-    unsigned char* pdata;
+    const unsigned char* pdata;
 
     // Reset Disasm Structure
-    Capstone cp;
+    Zydis cp;
 
     if(data == NULL)
         return 0;
@@ -181,7 +181,7 @@ ulong QBeaEngine::DisassembleNext(byte_t* data, duint base, duint size, duint ip
  *
  * @return      Return the disassembled instruction
  */
-Instruction_t QBeaEngine::DisassembleAt(byte_t* data, duint size, duint origBase, duint origInstRVA, bool datainstr)
+Instruction_t QBeaEngine::DisassembleAt(const byte_t* data, duint size, duint origBase, duint origInstRVA, bool datainstr)
 {
     if(datainstr)
     {
@@ -190,33 +190,25 @@ Instruction_t QBeaEngine::DisassembleAt(byte_t* data, duint size, duint origBase
             return DecodeDataAt(data, size, origBase, origInstRVA, type);
     }
     //tokenize
-    CapstoneTokenizer::InstructionToken cap;
+    ZydisTokenizer::InstructionToken cap;
     _tokenizer.Tokenize(origBase + origInstRVA, data, size, cap);
     int len = _tokenizer.Size();
 
-    const auto & cp = _tokenizer.GetCapstone();
+    const auto & cp = _tokenizer.GetZydis();
     bool success = cp.Success();
 
 
     auto branchType = Instruction_t::None;
     Instruction_t wInst;
-    if(success && (cp.InGroup(CS_GRP_JUMP) || cp.IsLoop() || cp.InGroup(CS_GRP_CALL) || cp.InGroup(CS_GRP_RET)))
+    if(success && cp.IsBranchType(Zydis::BTJmp | Zydis::BTCall | Zydis::BTRet | Zydis::BTLoop | Zydis::BTXbegin))
     {
         wInst.branchDestination = DbgGetBranchDestination(origBase + origInstRVA);
-        switch(cp.GetId())
-        {
-        case X86_INS_JMP:
-        case X86_INS_LJMP:
+        if(cp.IsBranchType(Zydis::BTUncondJmp))
             branchType = Instruction_t::Unconditional;
-            break;
-        case X86_INS_CALL:
-        case X86_INS_LCALL:
+        else if(cp.IsBranchType(Zydis::BTCall))
             branchType = Instruction_t::Call;
-            break;
-        default:
-            branchType = cp.InGroup(CS_GRP_RET) ? Instruction_t::None : Instruction_t::Conditional;
-            break;
-        }
+        else if(cp.IsBranchType(Zydis::BTCondJmp) || cp.IsBranchType(Zydis::BTLoop))
+            branchType = Instruction_t::Conditional;
     }
     else
         wInst.branchDestination = 0;
@@ -230,48 +222,101 @@ Instruction_t QBeaEngine::DisassembleAt(byte_t* data, duint size, duint origBase
         wInst.length = len;
     wInst.branchType = branchType;
     wInst.tokens = cap;
+    cp.BytesGroup(&wInst.prefixSize, &wInst.opcodeSize, &wInst.group1Size, &wInst.group2Size, &wInst.group3Size);
+    for(uint8_t i = 0; i < _countof(wInst.vectorElementType); ++i)
+        wInst.vectorElementType[i] = cp.getVectorElementType(i);
 
-    if(success)
+    if(!success)
+        return wInst;
+
+    auto instr = cp.GetInstr();
+    cp.RegInfo(reginfo);
+
+    for(size_t i = 0; i < _countof(instr->accessedFlags); ++i)
     {
-        cp.RegInfo(reginfo);
-        cp.FlagInfo(flaginfo);
+        auto flagAction = instr->accessedFlags[i].action;
+        if(flagAction == ZYDIS_CPUFLAG_ACTION_NONE)
+            continue;
 
-        auto flaginfo2reginfo = [](uint8_t info)
+        Zydis::RegAccessInfo rai;
+        switch(flagAction)
         {
-            auto result = 0;
-#define checkFlag(test, reg) result |= (info & test) == test ? reg : 0
-            checkFlag(Capstone::Modify, Capstone::Write);
-            checkFlag(Capstone::Prior, Capstone::None);
-            checkFlag(Capstone::Reset, Capstone::Write);
-            checkFlag(Capstone::Set, Capstone::Write);
-            checkFlag(Capstone::Test, Capstone::Read);
-            checkFlag(Capstone::Undefined, Capstone::None);
-#undef checkFlag
-            return result;
+        case ZYDIS_CPUFLAG_ACTION_MODIFIED:
+        case ZYDIS_CPUFLAG_ACTION_SET_0:
+        case ZYDIS_CPUFLAG_ACTION_SET_1:
+            rai = Zydis::RAIWrite;
+            break;
+        case ZYDIS_CPUFLAG_ACTION_TESTED:
+            rai = Zydis::RAIRead;
+            break;
+        default:
+            rai = Zydis::RAINone;
+            break;
+        }
+
+        reginfo[ZYDIS_REGISTER_RFLAGS] = Zydis::RAINone;
+        reginfo[ZYDIS_REGISTER_EFLAGS] = Zydis::RAINone;
+        reginfo[ZYDIS_REGISTER_FLAGS]  = Zydis::RAINone;
+
+        wInst.regsReferenced.emplace_back(cp.FlagName(ZydisCPUFlag(i)), rai);
+    }
+
+    reginfo[ArchValue(ZYDIS_REGISTER_EIP, ZYDIS_REGISTER_RIP)] = Zydis::RAINone;
+    for(int i = ZYDIS_REGISTER_NONE; i <= ZYDIS_REGISTER_MAX_VALUE; ++i)
+        if(reginfo[i])
+            wInst.regsReferenced.emplace_back(cp.RegName(ZydisRegister(i)), reginfo[i]);
+
+    // Info about volatile and nonvolatile registers
+    if(cp.IsBranchType(Zydis::BranchType::BTCall))
+    {
+        enum : uint8_t
+        {
+            Volatile = Zydis::RAIImplicit | Zydis::RAIWrite,
+            Parameter = Volatile | Zydis::RAIRead,
         };
+#define info(reg, type) wInst.regsReferenced.emplace_back(#reg, type)
 
-        for(uint8_t i = Capstone::FLAG_INVALID; i < Capstone::FLAG_ENDING; i++)
-            if(flaginfo[i])
-            {
-                reginfo[X86_REG_EFLAGS] = Capstone::None;
-                wInst.regsReferenced.push_back({cp.FlagName(Capstone::Flag(i)), flaginfo2reginfo(flaginfo[i])});
-            }
+#ifdef _WIN64
+        // https://docs.microsoft.com/en-us/cpp/build/x64-software-conventions
+        info(rax, Volatile);
+        info(rcx, Parameter);
+        info(rdx, Parameter);
+        info(r8, Parameter);
+        info(r9, Parameter);
+        info(r10, Volatile);
+        info(r11, Volatile);
+        info(xmm0, Parameter);
+        info(ymm0, Parameter);
+        info(xmm1, Parameter);
+        info(ymm1, Parameter);
+        info(xmm2, Parameter);
+        info(ymm2, Parameter);
+        info(xmm3, Parameter);
+        info(ymm3, Parameter);
+        info(xmm4, Parameter);
+        info(ymm4, Parameter);
+        info(xmm5, Parameter);
+        info(ymm5, Parameter);
 
-        reginfo[ArchValue(X86_REG_EIP, X86_REG_RIP)] = Capstone::None;
-        for(uint8_t i = X86_REG_INVALID; i < X86_REG_ENDING; i++)
-            if(reginfo[i])
-                wInst.regsReferenced.push_back({cp.RegName(x86_reg(i)), reginfo[i]});
+#else
+        // https://en.wikipedia.org/wiki/X86_calling_conventions#Caller-saved_(volatile)_registers
+        info(eax, Volatile);
+        info(edx, Volatile);
+        info(ecx, Volatile);
+#endif // _WIN64
+
+#undef info
     }
 
     return wInst;
 }
 
-Instruction_t QBeaEngine::DecodeDataAt(byte_t* data, duint size, duint origBase, duint origInstRVA, ENCODETYPE type)
+Instruction_t QBeaEngine::DecodeDataAt(const byte_t* data, duint size, duint origBase, duint origInstRVA, ENCODETYPE type)
 {
     //tokenize
-    CapstoneTokenizer::InstructionToken cap;
+    ZydisTokenizer::InstructionToken cap;
 
-    auto & infoIter = dataInstMap.find(type);
+    auto infoIter = dataInstMap.find(type);
     if(infoIter == dataInstMap.end())
         infoIter = dataInstMap.find(enc_byte);
 
@@ -293,6 +338,15 @@ Instruction_t QBeaEngine::DecodeDataAt(byte_t* data, duint size, duint origBase,
     wInst.branchType = Instruction_t::None;
     wInst.branchDestination = 0;
     wInst.tokens = cap;
+    wInst.prefixSize = 0;
+    wInst.opcodeSize = len;
+    wInst.group1Size = 0;
+    wInst.group2Size = 0;
+    wInst.group3Size = 0;
+    wInst.vectorElementType[0] = Zydis::VETDefault;
+    wInst.vectorElementType[1] = Zydis::VETDefault;
+    wInst.vectorElementType[2] = Zydis::VETDefault;
+    wInst.vectorElementType[3] = Zydis::VETDefault;
 
     return wInst;
 }
@@ -326,4 +380,41 @@ void QBeaEngine::UpdateConfig()
 {
     _bLongDataInst = ConfigBool("Disassembler", "LongDataInstruction");
     _tokenizer.UpdateConfig();
+}
+
+void formatOpcodeString(const Instruction_t & inst, RichTextPainter::List & list, std::vector<std::pair<size_t, bool>> & realBytes)
+{
+    RichTextPainter::CustomRichText_t curByte;
+    size_t size = inst.dump.size();
+    assert(list.empty()); //List must be empty before use
+    curByte.underlineWidth = 1;
+    curByte.flags = RichTextPainter::FlagAll;
+    curByte.underline = false;
+    list.reserve(size + 5);
+    realBytes.reserve(size + 5);
+    for(size_t i = 0; i < size; i++)
+    {
+        curByte.text = ToByteString(inst.dump.at(i));
+        list.push_back(curByte);
+        realBytes.push_back({i, true});
+
+        auto addCh = [&](char ch)
+        {
+            curByte.text = QString(ch);
+            list.push_back(curByte);
+            realBytes.push_back({i, false});
+        };
+
+        if(inst.prefixSize && i + 1 == inst.prefixSize)
+            addCh(':');
+        else if(inst.opcodeSize && i + 1 == inst.prefixSize + inst.opcodeSize)
+            addCh(' ');
+        else if(inst.group1Size && i + 1 == inst.prefixSize + inst.opcodeSize + inst.group1Size)
+            addCh(' ');
+        else if(inst.group2Size && i + 1 == inst.prefixSize + inst.opcodeSize + inst.group1Size + inst.group2Size)
+            addCh(' ');
+        else if(inst.group3Size && i + 1 == inst.prefixSize + inst.opcodeSize + inst.group1Size + inst.group2Size + inst.group3Size)
+            addCh(' ');
+
+    }
 }

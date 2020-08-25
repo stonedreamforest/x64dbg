@@ -97,8 +97,23 @@ void AdvancedAnalysis::analyzeFunction(duint entryPoint, bool writedata)
             {
                 if(writedata)
                     mEncMap[node.end - mBase] = (byte)enc_byte;
+                // If the next byte would be out of the memory range finish this node
+                if(!inRange(node.end + 1))
+                {
+                    graph.AddNode(node);
+                    break;
+                }
                 node.end++;
                 continue;
+            }
+            // If the memory range doesn't fit the entire instruction
+            // mark it as bytes and finish this node
+            if(!inRange(node.end + mCp.Size() - 1))
+            {
+                duint remainingSize = mBase + mSize - node.end;
+                memset(&mEncMap[node.end - mBase], (byte)enc_byte, remainingSize);
+                graph.AddNode(node);
+                break;
             }
             if(writedata)
             {
@@ -106,11 +121,11 @@ void AdvancedAnalysis::analyzeFunction(duint entryPoint, bool writedata)
                 for(int i = 1; i < mCp.Size(); i++)
                     mEncMap[node.end - mBase + i] = (byte)enc_middle;
             }
-            if(mCp.InGroup(CS_GRP_JUMP) || mCp.IsLoop()) //jump
+            if(mCp.IsJump() || mCp.IsLoop()) //jump
             {
                 //set the branch destinations
                 node.brtrue = mCp.BranchDestination();
-                if(mCp.GetId() != X86_INS_JMP) //unconditional jumps dont have a brfalse
+                if(mCp.GetId() != ZYDIS_MNEMONIC_JMP) //unconditional jumps dont have a brfalse
                     node.brfalse = node.end + mCp.Size();
 
                 //add node to the function graph
@@ -124,16 +139,22 @@ void AdvancedAnalysis::analyzeFunction(duint entryPoint, bool writedata)
 
                 break;
             }
-            if(mCp.InGroup(CS_GRP_CALL)) //call
+            if(mCp.IsCall()) //call
             {
                 //TODO: handle no return
                 duint target = mCp.BranchDestination();
                 if(inRange(target) && mEntryPoints.find(target) == mEntryPoints.end())
                     mCandidateEPs.insert(target);
             }
-            if(mCp.InGroup(CS_GRP_RET)) //return
+            if(mCp.IsRet()) //return
             {
                 node.terminal = true;
+                graph.AddNode(node);
+                break;
+            }
+            // If this instruction finishes the memory range, end the loop for this entry point
+            if(!inRange(node.end + mCp.Size()))
+            {
                 graph.AddNode(node);
                 break;
             }
@@ -164,7 +185,7 @@ void AdvancedAnalysis::linearXrefPass()
         xref.from = mCp.Address();
         for(auto i = 0; i < mCp.OpCount(); i++)
         {
-            duint dest = mCp.ResolveOpValue(i, [](x86_reg)->size_t
+            duint dest = mCp.ResolveOpValue(i, [](ZydisRegister)->size_t
             {
                 return 0;
             });
@@ -176,9 +197,9 @@ void AdvancedAnalysis::linearXrefPass()
         }
         if(xref.addr)
         {
-            if(mCp.InGroup(CS_GRP_CALL))
+            if(mCp.IsCall())
                 xref.type = XREF_CALL;
-            else if(mCp.InGroup(CS_GRP_JUMP))
+            else if(mCp.IsJump())
                 xref.type = XREF_JMP;
             else
                 xref.type = XREF_DATA;
@@ -218,21 +239,21 @@ void AdvancedAnalysis::findInvalidXrefs()
     }
 }
 
-bool isFloatInstruction(x86_insn opcode)
+bool isFloatInstruction(ZydisMnemonic opcode)
 {
     switch(opcode)
     {
-    case X86_INS_FLD:
-    case X86_INS_FST:
-    case X86_INS_FSTP:
-    case X86_INS_FADD:
-    case X86_INS_FSUB:
-    case X86_INS_FSUBR:
-    case X86_INS_FMUL:
-    case X86_INS_FDIV:
-    case X86_INS_FDIVR:
-    case X86_INS_FCOM:
-    case X86_INS_FCOMP:
+    case ZYDIS_MNEMONIC_FLD:
+    case ZYDIS_MNEMONIC_FST:
+    case ZYDIS_MNEMONIC_FSTP:
+    case ZYDIS_MNEMONIC_FADD:
+    case ZYDIS_MNEMONIC_FSUB:
+    case ZYDIS_MNEMONIC_FSUBR:
+    case ZYDIS_MNEMONIC_FMUL:
+    case ZYDIS_MNEMONIC_FDIV:
+    case ZYDIS_MNEMONIC_FDIVR:
+    case ZYDIS_MNEMONIC_FCOM:
+    case ZYDIS_MNEMONIC_FCOMP:
 
         return true;
     default:
@@ -261,48 +282,58 @@ void AdvancedAnalysis::writeDataXrefs()
                     ENCODETYPE type = enc_unknown;
 
                     //Todo: Analyze op type and set correct type
-                    if(op.type == X86_OP_MEM)
+                    if(op.type == ZYDIS_OPERAND_TYPE_MEMORY)
                     {
-                        duint datasize = op.size;
-                        duint size = datasize;
+                        duint size = op.size / 8;
                         duint offset = xref.addr - mBase;
                         switch(op.size)
                         {
-                        case 1:
+                        case 8:
                             type = enc_byte;
                             break;
-                        case 2:
+                        case 16:
                             type = enc_word;
                             break;
-                        case 4:
+                        case 32:
                             type = isfloat ? enc_real4 : enc_dword;
                             break;
-                        case 6:
+                        case 48:
                             type = enc_fword;
                             break;
-                        case 8:
+                        case 64:
                             type = isfloat ? enc_real8 : enc_qword;
                             break;
-                        case 10:
+                        case 80:
                             type = isfloat ? enc_real10 : enc_tbyte;
                             break;
-                        case 16:
+                        case 128:
                             type = enc_oword;
                             break;
-                        case 32:
+                        case 256:
                             type = enc_ymmword;
                             break;
-                            //case 64: type = enc_zmmword; break;
+                        //case 512: type = enc_zmmword; break;
+                        default:
+                            __debugbreak();
                         }
-                        if(datasize == 1)
+                        if(size == 1)
                         {
-                            memset(mEncMap + offset, (byte)type, size);
+                            mEncMap[offset] = (byte)type;
                         }
                         else
                         {
-                            memset(mEncMap + offset, (byte)enc_middle, size);
-                            for(duint j = offset; j < offset + size; j += datasize)
-                                mEncMap[j] = (byte)type;
+                            // Check if the entire referenced data fits into the memory range
+                            if((offset + size) <= mSize)
+                            {
+                                mEncMap[offset] = (byte)type;
+                                memset(mEncMap + offset + 1, (byte)enc_middle, size - 1);
+                            }
+                            else
+                            {
+                                // If it doesn't fit, mark the remaining places as bytes
+                                duint remainingSize = mSize - offset;
+                                memset(mEncMap + offset, (byte)enc_byte, size);
+                            }
                         }
                     }
                 }

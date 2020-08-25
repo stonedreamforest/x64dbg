@@ -43,9 +43,9 @@ void* emalloc(size_t size, const char* reason)
 #endif //ENABLE_MEM_TRACE
     if(!a)
     {
-        wchar_t size[25];
-        swprintf_s(size, L"%p bytes", size);
-        MessageBoxW(0, L"Could not allocate memory (minidump will be created)", size, MB_ICONERROR);
+        wchar_t sizeString[25];
+        swprintf_s(sizeString, L"%p bytes", size);
+        MessageBoxW(0, L"Could not allocate memory (minidump will be created)", sizeString, MB_ICONERROR);
         __debugbreak();
         ExitProcess(1);
     }
@@ -189,36 +189,6 @@ bool scmp(const char* a, const char* b)
 }
 
 /**
-\brief Formats a string to hexadecimal format (removes all non-hex characters).
-\param [in,out] String to format.
-*/
-void formathex(char* string)
-{
-    int len = (int)strlen(string);
-    _strupr(string);
-    Memory<char*> new_string(len + 1, "formathex:new_string");
-    for(int i = 0, j = 0; i < len; i++)
-        if(isxdigit(string[i]))
-            j += sprintf(new_string() + j, "%c", string[i]);
-    strcpy_s(string, len + 1, new_string());
-}
-
-/**
-\brief Formats a string to decimal format (removed all non-numeric characters).
-\param [in,out] String to format.
-*/
-void formatdec(char* string)
-{
-    int len = (int)strlen(string);
-    _strupr(string);
-    Memory<char*> new_string(len + 1, "formatdec:new_string");
-    for(int i = 0, j = 0; i < len; i++)
-        if(isdigit(string[i]))
-            j += sprintf(new_string() + j, "%c", string[i]);
-    strcpy_s(string, len + 1, new_string());
-}
-
-/**
 \brief Queries if a given file exists.
 \param file Path to the file to check (UTF-8).
 \return true if the file exists on the hard drive.
@@ -253,7 +223,7 @@ bool GetFileNameFromHandle(HANDLE hFile, char* szFileName)
     wchar_t wszFileName[MAX_PATH] = L"";
     if(!PathFromFileHandleW(hFile, wszFileName, _countof(wszFileName)))
         return false;
-    strcpy_s(szFileName, MAX_PATH, StringUtils::Utf16ToUtf8(wszFileName).c_str());
+    strncpy_s(szFileName, MAX_PATH, StringUtils::Utf16ToUtf8(wszFileName).c_str(), _TRUNCATE);
     return true;
 }
 
@@ -272,7 +242,7 @@ bool GetFileNameFromProcessHandle(HANDLE hProcess, char* szFileName)
     else
         result = !!GetModuleFileNameExW(hProcess, 0, wszFileName, _countof(wszFileName));
     if(result)
-        strcpy_s(szFileName, MAX_PATH, StringUtils::Utf16ToUtf8(wszFileName).c_str());
+        strncpy_s(szFileName, MAX_PATH, StringUtils::Utf16ToUtf8(wszFileName).c_str(), _TRUNCATE);
     return result;
 }
 
@@ -291,7 +261,7 @@ bool GetFileNameFromModuleHandle(HANDLE hProcess, HMODULE hModule, char* szFileN
     else
         result = !!GetModuleFileNameExW(hProcess, hModule, wszFileName, _countof(wszFileName));
     if(result)
-        strcpy_s(szFileName, MAX_PATH, StringUtils::Utf16ToUtf8(wszFileName).c_str());
+        strncpy_s(szFileName, MAX_PATH, StringUtils::Utf16ToUtf8(wszFileName).c_str(), _TRUNCATE);
     return result;
 }
 
@@ -324,7 +294,8 @@ bool IsWow64()
 }
 
 //Taken from: http://www.cplusplus.com/forum/windows/64088/
-bool ResolveShortcut(HWND hwnd, const wchar_t* szShortcutPath, char* szResolvedPath, size_t nSize)
+//And: https://codereview.stackexchange.com/a/2917
+bool ResolveShortcut(HWND hwnd, const wchar_t* szShortcutPath, wchar_t* szResolvedPath, size_t nSize)
 {
     if(szResolvedPath == NULL)
         return SUCCEEDED(E_INVALIDARG);
@@ -334,8 +305,8 @@ bool ResolveShortcut(HWND hwnd, const wchar_t* szShortcutPath, char* szResolvedP
         return false;
 
     //Get a pointer to the IShellLink interface.
-    IShellLink* psl = NULL;
-    HRESULT hres = CoCreateInstance(CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER, IID_IShellLink, (LPVOID*)&psl);
+    IShellLinkW* psl = NULL;
+    HRESULT hres = CoCreateInstance(CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER, IID_IShellLinkW, (LPVOID*)&psl);
     if(SUCCEEDED(hres))
     {
         //Get a pointer to the IPersistFile interface.
@@ -354,12 +325,16 @@ bool ResolveShortcut(HWND hwnd, const wchar_t* szShortcutPath, char* szResolvedP
                 if(SUCCEEDED(hres))
                 {
                     //Get the path to the link target.
-                    char szGotPath[MAX_PATH] = {0};
-                    hres = psl->GetPath(szGotPath, _countof(szGotPath), NULL, SLGP_SHORTPATH);
+                    wchar_t linkTarget[MAX_PATH];
+                    hres = psl->GetPath(linkTarget, _countof(linkTarget), NULL, SLGP_RAWPATH);
 
-                    if(SUCCEEDED(hres))
+                    //Expand the environment variables.
+                    wchar_t expandedTarget[MAX_PATH];
+                    auto expandSuccess = !!ExpandEnvironmentStringsW(linkTarget, expandedTarget, _countof(expandedTarget));
+
+                    if(SUCCEEDED(hres) && expandSuccess)
                     {
-                        strcpy_s(szResolvedPath, nSize, szGotPath);
+                        wcscpy_s(szResolvedPath, nSize, expandedTarget);
                     }
                 }
             }

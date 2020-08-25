@@ -3,11 +3,12 @@
 
 #include <QProgressBar>
 #include <QLabel>
-#include "SearchListView.h"
+#include "StdSearchListView.h"
+class DisassemblyPopup;
 
 class QTabWidget;
 
-class ReferenceView : public SearchListView
+class ReferenceView : public StdSearchListView
 {
     Q_OBJECT
 
@@ -16,15 +17,16 @@ public:
     void setupContextMenu();
     void connectBridge();
     void disconnectBridge();
+    int progress() const;
+    int currentTaskProgress() const;
 
 public slots:
-    void addColumnAt(int width, QString title);
-    void setRowCount(dsint count);
-    void setCellContent(int r, int c, QString s);
-    void addCommand(QString title, QString command);
-    void reloadData();
+    void addColumnAtRef(int width, QString title);
+
+    void setRowCount(dsint count) override;
+
     void setSingleSelection(int index, bool scroll);
-    void setSearchStartCol(int col);
+    void addCommand(QString title, QString command);
     void referenceContextMenu(QMenu* wMenu);
     void followAddress();
     void followDumpAddress();
@@ -40,6 +42,7 @@ public slots:
     void referenceSetProgressSlot(int progress);
     void referenceSetCurrentTaskProgressSlot(int progress, QString taskTitle);
     void searchSelectionChanged(int index);
+    void reloadDataSlot();
 
 signals:
     void showCpu();
@@ -59,8 +62,9 @@ private:
     QAction* mRemoveBreakpointOnAllCommands;
     QAction* mSetBreakpointOnAllApiCalls;
     QAction* mRemoveBreakpointOnAllApiCalls;
+    bool mUpdateCountLabel = false;
     QLabel* mCountTotalLabel;
-    QVector<QString> mCommnadTitles;
+    QVector<QString> mCommandTitles;
     QVector<QString> mCommands;
     QTabWidget* mParent;
 

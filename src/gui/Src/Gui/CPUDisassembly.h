@@ -5,7 +5,7 @@
 #include "BreakpointMenu.h"
 
 // Needed forward declaration for parent container class
-class CPUWidget;
+class CPUSideBar;
 class GotoDialog;
 class XrefBrowseDialog;
 
@@ -14,7 +14,7 @@ class CPUDisassembly : public Disassembly
     Q_OBJECT
 
 public:
-    explicit CPUDisassembly(CPUWidget* parent);
+    CPUDisassembly(QWidget* parent, bool isMain);
 
     // Mouse management
     void contextMenuEvent(QContextMenuEvent* event);
@@ -27,14 +27,15 @@ public:
     void setupFollowReferenceMenu(dsint wVA, QMenu* menu, bool isReferences, bool isFollowInCPU);
     void copySelectionSlot(bool copyBytes);
     void copySelectionToFileSlot(bool copyBytes);
+    void setSideBar(CPUSideBar* sideBar);
 
 signals:
     void displayReferencesWidget();
     void displaySourceManagerWidget();
     void showPatches();
-    void displaySnowmanWidget();
     void displayLogWidget();
     void displayGraphWidget();
+    void displaySymbolsWidget();
 
 public slots:
     void setNewOriginHereActionSlot();
@@ -45,6 +46,8 @@ public slots:
     void setBookmarkSlot();
     void toggleFunctionSlot();
     void toggleArgumentSlot();
+    void addLoopSlot();
+    void deleteLoopSlot();
     void assembleSlot();
     void gotoExpressionSlot();
     void gotoFileOffsetSlot();
@@ -64,6 +67,7 @@ public slots:
     void findCallsSlot();
     void findPatternSlot();
     void findGUIDSlot();
+    void findNamesSlot();
     void selectionGetSlot(SELECTIONDATA* selection);
     void selectionSetSlot(const SELECTIONDATA* selection);
     void selectionUpdatedSlot();
@@ -76,7 +80,6 @@ public slots:
     void binaryPasteIgnoreSizeSlot();
     void undoSelectionSlot();
     void showPatchesSlot();
-    void yaraSlot();
     void copySelectionSlot();
     void copySelectionToFileSlot();
     void copySelectionNoBytesSlot();
@@ -84,19 +87,18 @@ public slots:
     void copyAddressSlot();
     void copyRvaSlot();
     void copyFileOffsetSlot();
+    void copyHeaderVaSlot();
     void copyDisassemblySlot();
-    void copyDataSlot();
     void labelCopySlot();
     void findCommandSlot();
     void openSourceSlot();
-    void decompileSelectionSlot();
-    void decompileFunctionSlot();
     void mnemonicHelpSlot();
     void mnemonicBriefSlot();
     void ActionTraceRecordBitSlot();
     void ActionTraceRecordByteSlot();
     void ActionTraceRecordWordSlot();
     void ActionTraceRecordDisableSlot();
+    void ActionTraceRecordToggleRunTraceSlot();
     void displayWarningSlot(QString title, QString text);
     void labelHelpSlot();
     void analyzeSingleFunctionSlot();
@@ -106,7 +108,6 @@ public slots:
     void setEncodeTypeRangeSlot();
     void graphSlot();
     void analyzeModuleSlot();
-    void togglePreviewSlot();
     void createThreadSlot();
     void copyTokenTextSlot();
     void copyTokenValueSlot();
@@ -114,9 +115,10 @@ public slots:
     void downloadCurrentSymbolsSlot();
 
 protected:
-    void paintEvent(QPaintEvent* event);
+    void paintEvent(QPaintEvent* event) override;
 
 private:
+    int findDeepestLoopDepth(duint addr);
     bool getLabelsFromInstruction(duint addr, QSet<QString> & labels);
     bool getTokenValueText(QString & text);
 
@@ -124,7 +126,7 @@ private:
 
     // Menus
     QMenu* mHwSlotSelectMenu;
-    QMenu* mPluginMenu;
+    QMenu* mPluginMenu = nullptr;
 
     // Actions
     QAction* mReferenceSelectedAddressAction;
@@ -141,6 +143,7 @@ private:
     QAction* mFindCallsModule;
     QAction* mFindPatternModule;
     QAction* mFindGUIDModule;
+    QAction* mFindNamesModule;
 
     QAction* mFindCommandFunction;
     QAction* mFindConstantFunction;
@@ -162,7 +165,7 @@ private:
     XrefBrowseDialog* mXrefDlg = nullptr;
 
     // Parent CPU window
-    CPUWidget* mParentCPUWindow;
+    CPUSideBar* mSideBar = nullptr;
 
     MenuBuilder* mMenuBuilder;
     MenuBuilder* mHighlightMenuBuilder;

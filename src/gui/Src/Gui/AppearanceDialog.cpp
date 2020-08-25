@@ -3,6 +3,7 @@
 #include <QColorDialog>
 #include <QFontDialog>
 #include <QMessageBox>
+#include <memory>
 #include "Configuration.h"
 #include "StringUtil.h"
 #include "MiscUtil.h"
@@ -176,7 +177,7 @@ void AppearanceDialog::on_editBackgroundColor_textChanged(const QString & arg1)
         {
             (*colorMap)[id] = Qt::transparent;
             ui->buttonSave->setEnabled(true);
-            Config()->emitColorsUpdated();
+            emit Config()->colorsUpdated();
             GuiUpdateAllViews();
         }
     }
@@ -190,7 +191,7 @@ void AppearanceDialog::on_editBackgroundColor_textChanged(const QString & arg1)
             {
                 (*colorMap)[id] = QColor(text);
                 ui->buttonSave->setEnabled(true);
-                Config()->emitColorsUpdated();
+                emit Config()->colorsUpdated();
                 GuiUpdateAllViews();
             }
         }
@@ -228,7 +229,7 @@ void AppearanceDialog::on_editColor_textChanged(const QString & arg1)
         {
             (*colorMap)[id] = QColor(text);
             ui->buttonSave->setEnabled(true);
-            Config()->emitColorsUpdated();
+            emit Config()->colorsUpdated();
             GuiUpdateAllViews();
         }
     }
@@ -243,26 +244,12 @@ void AppearanceDialog::on_editColor_textChanged(const QString & arg1)
 
 void AppearanceDialog::on_buttonColor_clicked()
 {
-    QColorDialog colorDialog(QColor(ui->editColor->text()), this);
-    if(colorDialog.exec() == QDialog::Accepted)
-        ui->editColor->setText(colorDialog.selectedColor().name().toUpper());
+    selectColor(ui->editColor);
 }
 
 void AppearanceDialog::on_buttonBackgroundColor_clicked()
 {
-    QColor initialColor;
-    if(ui->editBackgroundColor->text().toUpper() == "#XXXXXX")
-        initialColor = Qt::black; //transparent will set the alpha channel, which users will forget
-    else
-        initialColor = QColor(ui->editBackgroundColor->text());
-    QColor selectedColor = QColorDialog::getColor(initialColor, this, tr("Select Color"), QColorDialog::ShowAlphaChannel);
-    if(selectedColor.isValid())
-    {
-        if(!selectedColor.alpha())
-            ui->editBackgroundColor->setText("#XXXXXX");
-        else
-            ui->editBackgroundColor->setText(selectedColor.name().toUpper());
-    }
+    selectColor(ui->editBackgroundColor);
 }
 
 void AppearanceDialog::on_listColorNames_itemSelectionChanged()
@@ -420,10 +407,6 @@ void AppearanceDialog::colorInfoListInit()
     colorInfoListAppend(tr("Bytes"), "DisassemblyBytesColor", "DisassemblyBytesBackgroundColor");
     colorInfoListAppend(tr("Modified Bytes"), "DisassemblyModifiedBytesColor", "DisassemblyModifiedBytesBackgroundColor");
     colorInfoListAppend(tr("Restored Bytes"), "DisassemblyRestoredBytesColor", "DisassemblyRestoredBytesBackgroundColor");
-    colorInfoListAppend(tr("0x00 Bytes"), "DisassemblyByte00Color", "DisassemblyByte00BackgroundColor");
-    colorInfoListAppend(tr("0x7F Bytes"), "DisassemblyByte7FColor", "DisassemblyByte7FBackgroundColor");
-    colorInfoListAppend(tr("0xFF Bytes"), "DisassemblyByteFFColor", "DisassemblyByteFFBackgroundColor");
-    colorInfoListAppend(tr("IsPrint Bytes"), "DisassemblyByteIsPrintColor", "DisassemblyByteIsPrintBackgroundColor");
     colorInfoListAppend(tr("Relocation underline"), "DisassemblyRelocationUnderlineColor", "");
     colorInfoListAppend(ArchValue(tr("EIP"), tr("RIP")), "DisassemblyCipColor", "DisassemblyCipBackgroundColor");
     colorInfoListAppend(tr("Breakpoints"), "DisassemblyBreakpointColor", "DisassemblyBreakpointBackgroundColor");
@@ -445,13 +428,17 @@ void AppearanceDialog::colorInfoListInit()
     colorInfoListAppend(tr("SideBar:"), "", "");
     colorInfoListAppend(tr("Register Labels"), "SideBarCipLabelColor", "SideBarCipLabelBackgroundColor");
     colorInfoListAppend(tr("Bullets"), "SideBarBulletColor", "");
-    colorInfoListAppend(tr("Breakpoints"), "SideBarBulletBreakpointColor", "");
-    colorInfoListAppend(tr("Disabled Breakpoints"), "SideBarBulletDisabledBreakpointColor", "");
-    colorInfoListAppend(tr("Bookmarks"), "SideBarBulletBookmarkColor", "");
+    colorInfoListAppend(tr("Breakpoint bullets"), "SideBarBulletBreakpointColor", "");
+    colorInfoListAppend(tr("Disabled Breakpoint bullets"), "SideBarBulletDisabledBreakpointColor", "");
+    colorInfoListAppend(tr("Bookmark bullets"), "SideBarBulletBookmarkColor", "");
     colorInfoListAppend(tr("Conditional Jump Lines (jump)"), "SideBarConditionalJumpLineTrueColor", "");
     colorInfoListAppend(tr("Conditional Jump Lines (no jump)"), "SideBarConditionalJumpLineFalseColor", "");
     colorInfoListAppend(tr("Unconditional Jump Lines (jump)"), "SideBarUnconditionalJumpLineTrueColor", "");
     colorInfoListAppend(tr("Unconditional Jump Lines (no jump)"), "SideBarUnconditionalJumpLineFalseColor", "");
+    colorInfoListAppend(tr("Conditional Jump Backwards Lines (jump)"), "SideBarConditionalJumpLineTrueBackwardsColor", "");
+    colorInfoListAppend(tr("Conditional Jump Backwards Lines (no jump)"), "SideBarConditionalJumpLineFalseBackwardsColor", "");
+    colorInfoListAppend(tr("Unconditional Jump Backwards Lines (jump)"), "SideBarUnconditionalJumpLineTrueBackwardsColor", "");
+    colorInfoListAppend(tr("Unconditional Jump Backwards Lines (no jump)"), "SideBarUnconditionalJumpLineFalseBackwardsColor", "");
     colorInfoListAppend(tr("Jump Lines (executing)"), "SideBarJumpLineExecuteColor", "");
     colorInfoListAppend(tr("Code Folding Checkbox Color"), "SideBarCheckBoxForeColor", "SideBarCheckBoxBackColor");
     colorInfoListAppend(tr("Background"), "SideBarBackgroundColor", "");
@@ -470,7 +457,7 @@ void AppearanceDialog::colorInfoListInit()
 
     colorInfoListAppend(tr("Instructions:"), "", "");
     colorInfoListAppend(tr("Text"), "InstructionUncategorizedColor", "InstructionUncategorizedBackgroundColor");
-    colorInfoListAppend(tr("Highlighting"), "InstructionHighlightColor", "");
+    colorInfoListAppend(tr("Highlighting"), "InstructionHighlightColor", "InstructionHighlightBackgroundColor");
     colorInfoListAppend(tr("Commas"), "InstructionCommaColor", "InstructionCommaBackgroundColor");
     colorInfoListAppend(tr("Prefixes"), "InstructionPrefixColor", "InstructionPrefixBackgroundColor");
     colorInfoListAppend(tr("Addresses"), "InstructionAddressColor", "InstructionAddressBackgroundColor");
@@ -542,6 +529,7 @@ void AppearanceDialog::colorInfoListInit()
     colorInfoListAppend(tr("Graph:"), "", "");
     colorInfoListAppend(tr("Background"), "GraphBackgroundColor", "");
     colorInfoListAppend(tr("Node"), "GraphNodeColor", "GraphNodeBackgroundColor");
+    colorInfoListAppend(tr("Current node shadow"), "GraphCurrentShadowColor", "");
     colorInfoListAppend(tr("Terminal node shadow"), "GraphRetShadowColor", "");
     colorInfoListAppend(tr("Indirect call shadow"), "GraphIndirectcallShadowColor", "");
     colorInfoListAppend(tr("Unconditional branch line"), "GraphJmpColor", "");
@@ -557,7 +545,7 @@ void AppearanceDialog::colorInfoListInit()
     colorInfoListAppend(tr("Memory Map Breakpoint"), "MemoryMapBreakpointColor", "MemoryMapBreakpointBackgroundColor");
     colorInfoListAppend(tr("Memory Map %1").arg(ArchValue(tr("EIP"), tr("RIP"))), "MemoryMapCipColor", "MemoryMapCipBackgroundColor");
     colorInfoListAppend(tr("Memory Map Section Text"), "MemoryMapSectionTextColor", "");
-    colorInfoListAppend(tr("Search Highlight Color"), "SearchListViewHighlightColor", "");
+    colorInfoListAppend(tr("Search Highlight Color"), "SearchListViewHighlightColor", "SearchListViewHighlightBackgroundColor");
     colorInfoListAppend(tr("Struct primary background"), "StructBackgroundColor", "");
     colorInfoListAppend(tr("Struct secondary background"), "StructAlternateBackgroundColor", "");
     colorInfoListAppend(tr("Log Link Color") + "*", "LogLinkColor", "LogLinkBackgroundColor");
@@ -565,7 +553,10 @@ void AppearanceDialog::colorInfoListInit()
     colorInfoListAppend(tr("Breakpoint Summary Keywords"), "BreakpointSummaryKeywordColor", "");
     colorInfoListAppend(tr("Breakpoint Summary Strings"), "BreakpointSummaryStringColor", "");
     colorInfoListAppend(tr("Patch located in relocation region"), "PatchRelocatedByteHighlightColor", "");
-
+    colorInfoListAppend(tr("Symbol Unloaded Text"), "SymbolUnloadedTextColor", "");
+    colorInfoListAppend(tr("Symbol Loading Text"), "SymbolLoadingTextColor", "");
+    colorInfoListAppend(tr("Symbol Loaded Text"), "SymbolLoadedTextColor", "");
+    colorInfoListAppend(tr("Background Flicker Color"), "BackgroundFlickerColor", "");
 
     //dev helper
     const QMap<QString, QColor>* Colors = &Config()->defaultColors;
@@ -706,6 +697,65 @@ void AppearanceDialog::fontInit()
     isInit = false;
 }
 
+void AppearanceDialog::selectColor(QLineEdit* lineEdit, QColorDialog::ColorDialogOptions options)
+{
+    colorLineEdit = lineEdit;
+    auto oldText = lineEdit->text();
+    QColor initialColor;
+    if(oldText.toUpper() == "#XXXXXX")
+        initialColor = Qt::black; //transparent will set the alpha channel, which users will forget
+    else
+        initialColor = QColor(oldText);
+    QColorDialog dialog(initialColor, this);
+    dialog.setWindowTitle(tr("Select Color"));
+    dialog.setOptions(options);
+    connect(&dialog, &QColorDialog::currentColorChanged, this, &AppearanceDialog::colorSelectionChangedSlot);
+    duint customColorCount = 0;
+    BridgeSettingGetUint("Colors", "CustomColorCount", &customColorCount);
+    if(customColorCount > 0)
+    {
+        for(duint i = 0; i < customColorCount; i++)
+        {
+            char customColorText[MAX_SETTING_SIZE] = "";
+            if(BridgeSettingGet("Colors", QString("CustomColor%1").arg(i).toUtf8().constData(), customColorText))
+            {
+                QColor customColor;
+                if(strcmp(customColorText, "#XXXXXX") == 0)
+                    customColor = Qt::transparent;
+                else
+                    customColor = QColor(customColorText);
+                dialog.setCustomColor(i, customColor);
+            }
+        }
+    }
+    auto result = dialog.exec();
+    for(duint i = 0; i < dialog.customCount(); i++)
+    {
+        QColor customColor = dialog.customColor(i);
+        QString colorName = customColor.name().toUpper();
+        if(!customColor.alpha())
+            colorName = "#XXXXXX";
+        BridgeSettingSet("Colors", QString("CustomColor%1").arg(i).toUtf8().constData(), colorName.toUtf8().constData());
+    }
+    BridgeSettingSetUint("Colors", "CustomColorCount", dialog.customCount());
+    colorLineEdit = nullptr;
+    if(result == QDialog::Accepted)
+    {
+        lineEdit->setText(colorToString(dialog.selectedColor()));
+    }
+    else
+    {
+        lineEdit->setText(oldText);
+    }
+}
+
+QString AppearanceDialog::colorToString(const QColor & color)
+{
+    if(!color.alpha())
+        return "#XXXXXX";
+    return color.name();
+}
+
 void AppearanceDialog::on_fontAbstractTables_currentFontChanged(const QFont & f)
 {
     QString id = "AbstractTableView";
@@ -714,7 +764,7 @@ void AppearanceDialog::on_fontAbstractTables_currentFontChanged(const QFont & f)
     (*fontMap)[id] = font;
     if(isInit)
         return;
-    Config()->emitFontsUpdated();
+    emit Config()->fontsUpdated();
     GuiUpdateAllViews();
 }
 
@@ -732,7 +782,7 @@ void AppearanceDialog::on_fontAbstractTablesStyle_currentIndexChanged(int index)
     (*fontMap)[id] = font;
     if(isInit)
         return;
-    Config()->emitFontsUpdated();
+    emit Config()->fontsUpdated();
     GuiUpdateAllViews();
 }
 
@@ -745,7 +795,7 @@ void AppearanceDialog::on_fontAbstractTablesSize_currentIndexChanged(const QStri
     (*fontMap)[id] = font;
     if(isInit)
         return;
-    Config()->emitFontsUpdated();
+    emit Config()->fontsUpdated();
     GuiUpdateAllViews();
 }
 
@@ -758,7 +808,7 @@ void AppearanceDialog::on_fontDisassembly_currentFontChanged(const QFont & f)
     (*fontMap)[id] = font;
     if(isInit)
         return;
-    Config()->emitFontsUpdated();
+    emit Config()->fontsUpdated();
     GuiUpdateAllViews();
 }
 
@@ -776,7 +826,7 @@ void AppearanceDialog::on_fontDisassemblyStyle_currentIndexChanged(int index)
     (*fontMap)[id] = font;
     if(isInit)
         return;
-    Config()->emitFontsUpdated();
+    emit Config()->fontsUpdated();
     GuiUpdateAllViews();
 }
 
@@ -789,7 +839,7 @@ void AppearanceDialog::on_fontDisassemblySize_currentIndexChanged(const QString 
     (*fontMap)[id] = font;
     if(isInit)
         return;
-    Config()->emitFontsUpdated();
+    emit Config()->fontsUpdated();
     GuiUpdateAllViews();
 }
 
@@ -802,7 +852,7 @@ void AppearanceDialog::on_fontHexDump_currentFontChanged(const QFont & f)
     (*fontMap)[id] = font;
     if(isInit)
         return;
-    Config()->emitFontsUpdated();
+    emit Config()->fontsUpdated();
     GuiUpdateAllViews();
 }
 
@@ -820,7 +870,7 @@ void AppearanceDialog::on_fontHexDumpStyle_currentIndexChanged(int index)
     (*fontMap)[id] = font;
     if(isInit)
         return;
-    Config()->emitFontsUpdated();
+    emit Config()->fontsUpdated();
     GuiUpdateAllViews();
 }
 
@@ -833,7 +883,7 @@ void AppearanceDialog::on_fontHexDumpSize_currentIndexChanged(const QString & ar
     (*fontMap)[id] = font;
     if(isInit)
         return;
-    Config()->emitFontsUpdated();
+    emit Config()->fontsUpdated();
     GuiUpdateAllViews();
 }
 
@@ -846,7 +896,7 @@ void AppearanceDialog::on_fontStack_currentFontChanged(const QFont & f)
     (*fontMap)[id] = font;
     if(isInit)
         return;
-    Config()->emitFontsUpdated();
+    emit Config()->fontsUpdated();
     GuiUpdateAllViews();
 }
 
@@ -864,7 +914,7 @@ void AppearanceDialog::on_fontStackStyle_currentIndexChanged(int index)
     (*fontMap)[id] = font;
     if(isInit)
         return;
-    Config()->emitFontsUpdated();
+    emit Config()->fontsUpdated();
     GuiUpdateAllViews();
 }
 
@@ -877,7 +927,7 @@ void AppearanceDialog::on_fontStackSize_currentIndexChanged(const QString & arg1
     (*fontMap)[id] = font;
     if(isInit)
         return;
-    Config()->emitFontsUpdated();
+    emit Config()->fontsUpdated();
     GuiUpdateAllViews();
 }
 
@@ -890,7 +940,7 @@ void AppearanceDialog::on_fontRegisters_currentFontChanged(const QFont & f)
     (*fontMap)[id] = font;
     if(isInit)
         return;
-    Config()->emitFontsUpdated();
+    emit Config()->fontsUpdated();
     GuiUpdateAllViews();
 }
 
@@ -908,7 +958,7 @@ void AppearanceDialog::on_fontRegistersStyle_currentIndexChanged(int index)
     (*fontMap)[id] = font;
     if(isInit)
         return;
-    Config()->emitFontsUpdated();
+    emit Config()->fontsUpdated();
     GuiUpdateAllViews();
 }
 
@@ -921,7 +971,7 @@ void AppearanceDialog::on_fontRegistersSize_currentIndexChanged(const QString & 
     (*fontMap)[id] = font;
     if(isInit)
         return;
-    Config()->emitFontsUpdated();
+    emit Config()->fontsUpdated();
     GuiUpdateAllViews();
 }
 
@@ -934,7 +984,7 @@ void AppearanceDialog::on_fontHexEdit_currentFontChanged(const QFont & f)
     (*fontMap)[id] = font;
     if(isInit)
         return;
-    Config()->emitFontsUpdated();
+    emit Config()->fontsUpdated();
     GuiUpdateAllViews();
 }
 
@@ -952,7 +1002,7 @@ void AppearanceDialog::on_fontHexEditStyle_currentIndexChanged(int index)
     (*fontMap)[id] = font;
     if(isInit)
         return;
-    Config()->emitFontsUpdated();
+    emit Config()->fontsUpdated();
     GuiUpdateAllViews();
 }
 
@@ -965,7 +1015,7 @@ void AppearanceDialog::on_fontHexEditSize_currentIndexChanged(const QString & ar
     (*fontMap)[id] = font;
     if(isInit)
         return;
-    Config()->emitFontsUpdated();
+    emit Config()->fontsUpdated();
     GuiUpdateAllViews();
 }
 
@@ -978,7 +1028,7 @@ void AppearanceDialog::on_fontLog_currentFontChanged(const QFont & f)
     (*fontMap)[id] = font;
     if(isInit)
         return;
-    Config()->emitFontsUpdated();
+    emit Config()->fontsUpdated();
     GuiUpdateAllViews();
 }
 
@@ -996,7 +1046,7 @@ void AppearanceDialog::on_fontLogStyle_currentIndexChanged(int index)
     (*fontMap)[id] = font;
     if(isInit)
         return;
-    Config()->emitFontsUpdated();
+    emit Config()->fontsUpdated();
     GuiUpdateAllViews();
 }
 
@@ -1009,7 +1059,7 @@ void AppearanceDialog::on_fontLogSize_currentIndexChanged(const QString & arg1)
     (*fontMap)[id] = font;
     if(isInit)
         return;
-    Config()->emitFontsUpdated();
+    emit Config()->fontsUpdated();
     GuiUpdateAllViews();
 }
 
@@ -1024,7 +1074,7 @@ void AppearanceDialog::on_buttonApplicationFont_clicked()
     ui->labelApplicationFont->setText(fontDialog.currentFont().family());
     if(isInit)
         return;
-    Config()->emitFontsUpdated();
+    emit Config()->fontsUpdated();
     GuiUpdateAllViews();
 }
 
@@ -1034,15 +1084,21 @@ void AppearanceDialog::on_buttonFontDefaults_clicked()
     isInit = true;
     fontInit();
     isInit = false;
-    Config()->emitFontsUpdated();
+    emit Config()->fontsUpdated();
     GuiUpdateAllViews();
 }
 
 void AppearanceDialog::rejectedSlot()
 {
     Config()->Colors = colorBackupMap;
-    Config()->emitColorsUpdated();
+    emit Config()->colorsUpdated();
     Config()->Fonts = fontBackupMap;
-    Config()->emitFontsUpdated();
+    emit Config()->fontsUpdated();
     GuiUpdateAllViews();
+}
+
+void AppearanceDialog::colorSelectionChangedSlot(QColor color)
+{
+    if(colorLineEdit)
+        colorLineEdit->setText(colorToString(color));
 }

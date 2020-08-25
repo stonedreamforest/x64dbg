@@ -3,12 +3,7 @@
 // Allocate a message stack
 MESSAGE_STACK* MsgAllocStack()
 {
-    auto stack = new MESSAGE_STACK;
-
-    stack->WaitingCalls = 0;
-    stack->Destroy = false;
-
-    return stack;
+    return new MESSAGE_STACK();
 }
 
 // Free a message stack
@@ -27,7 +22,7 @@ void MsgFreeStack(MESSAGE_STACK* Stack)
     }
 
     // Delete allocated structure
-    delete Stack;
+    //delete Stack;
 }
 
 // Add a message to the stack

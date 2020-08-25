@@ -2,6 +2,7 @@
 #include "ui_AssembleDialog.h"
 #include "ValidateExpressionThread.h"
 #include <QMessageBox>
+#include "Configuration.h"
 
 bool AssembleDialog::bWarningShowedOnce = false;
 
@@ -78,7 +79,10 @@ void AssembleDialog::setOkButtonEnabled(bool enabled)
 
 void AssembleDialog::validateInstruction(QString expression)
 {
-    if(!ui->lineEdit->text().length())
+    //sanitize the expression (just simplifying it by removing excess whitespaces)
+    expression = expression.simplified();
+
+    if(!expression.length())
     {
         emit mValidateThread->emitInstructionChanged(0, tr("empty instruction"));
         return;
@@ -96,7 +100,7 @@ void AssembleDialog::validateInstruction(QString expression)
     selectedInstructionSize = basicInstrInfo.size;
 
     // Get typed in instruction size
-    if(!DbgFunctions()->Assemble(mSelectedInstrVa, NULL, &typedInstructionSize, ui->lineEdit->text().toUtf8().constData(), error.data())  || selectedInstructionSize == 0)
+    if(!DbgFunctions()->Assemble(mSelectedInstrVa, NULL, &typedInstructionSize, expression.toUtf8().constData(), error.data())  || selectedInstructionSize == 0)
     {
         emit mValidateThread->emitInstructionChanged(0, QString(error));
         return;

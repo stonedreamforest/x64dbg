@@ -47,6 +47,7 @@
     <addaction name="actionImportdatabase"/>
     <addaction name="actionExportdatabase"/>
     <addaction name="actionPatches"/>
+    <addaction name="actionChangeCommandLine"/>
     <addaction name="actionRestartAdmin"/>
     <addaction name="separator"/>
     <addaction name="actionExit"/>
@@ -64,79 +65,70 @@
     <addaction name="actionSEHChain"/>
     <addaction name="actionScript"/>
     <addaction name="actionSymbolInfo"/>
+    <addaction name="actionModules"/>
     <addaction name="actionSource"/>
     <addaction name="actionReferences"/>
     <addaction name="actionThreads"/>
+    <addaction name="actionHandles"/>
+    <addaction name="actionGraph"/>
+    <addaction name="actionTrace"/>
     <addaction name="actionPatches"/>
     <addaction name="actionComments"/>
     <addaction name="actionLabels"/>
     <addaction name="actionBookmarks"/>
     <addaction name="actionFunctions"/>
     <addaction name="actionVariables"/>
-    <addaction name="actionSnowman"/>
-    <addaction name="actionHandles"/>
-    <addaction name="actionGraph"/>
+    <addaction name="actionCommand"/>
     <addaction name="separator"/>
     <addaction name="actionPreviousTab"/>
     <addaction name="actionNextTab"/>
+    <addaction name="actionPreviousView"/>
+    <addaction name="actionNextView"/>
     <addaction name="actionHideTab"/>
    </widget>
    <widget class="QMenu" name="menuDebug">
     <property name="title">
      <string>&amp;Debug</string>
     </property>
-    <widget class="QMenu" name="menuTrace_record">
+    <widget class="QMenu" name="menuAdvanced">
      <property name="title">
-      <string>Trace record</string>
+      <string>Advanced</string>
      </property>
      <property name="icon">
       <iconset resource="../../resource.qrc">
-       <normaloff>:/icons/images/trace.png</normaloff>:/icons/images/trace.png</iconset>
+       <normaloff>:/icons/images/branchpreview.png</normaloff>:/icons/images/branchpreview.png</iconset>
      </property>
-     <addaction name="actionTRBit"/>
-     <addaction name="actionTRByte"/>
-     <addaction name="actionTRWord"/>
-     <addaction name="actionTRNone"/>
+     <addaction name="actioneRun"/>
+     <addaction name="actionseRun"/>
+     <addaction name="actionRunExpression"/>
      <addaction name="separator"/>
-     <addaction name="actionTRTIBT"/>
-     <addaction name="actionTRTOBT"/>
-     <addaction name="actionTRTIIT"/>
-     <addaction name="actionTRTOIT"/>
+     <addaction name="actioneStepInto"/>
+     <addaction name="actionseStepInto"/>
+     <addaction name="actionStepIntoSource"/>
+     <addaction name="actioneStepOver"/>
+     <addaction name="actionseStepOver"/>
+     <addaction name="actionStepOverSource"/>
+     <addaction name="separator"/>
+     <addaction name="actioneRtr"/>
+     <addaction name="actionSkipNextInstruction"/>
+     <addaction name="actionInstrUndo"/>
+     <addaction name="separator"/>
+     <addaction name="actionHideDebugger"/>
     </widget>
     <addaction name="actionRun"/>
-    <addaction name="actioneRun"/>
-    <addaction name="actionseRun"/>
     <addaction name="actionRunSelection"/>
-    <addaction name="actionRunExpression"/>
     <addaction name="actionPause"/>
     <addaction name="actionRestart"/>
     <addaction name="actionClose"/>
-    <addaction name="actionChangeCommandLine"/>
     <addaction name="separator"/>
     <addaction name="actionStepInto"/>
-    <addaction name="actioneStepInto"/>
-    <addaction name="actionseStepInto"/>
-    <addaction name="actionStepIntoSource"/>
-    <addaction name="actionTicnd"/>
-    <addaction name="actionAnimateInto"/>
     <addaction name="actionStepOver"/>
-    <addaction name="actioneStepOver"/>
-    <addaction name="actionseStepOver"/>
-    <addaction name="actionStepOverSource"/>
-    <addaction name="actionTocnd"/>
-    <addaction name="actionAnimateOver"/>
     <addaction name="separator"/>
     <addaction name="actionRtr"/>
-    <addaction name="actioneRtr"/>
-    <addaction name="actionSkipNextInstruction"/>
-    <addaction name="actionInstrUndo"/>
     <addaction name="actionRtu"/>
-    <addaction name="actionAnimateCommand"/>
-    <addaction name="menuTrace_record"/>
     <addaction name="separator"/>
-    <addaction name="actionCommand"/>
     <addaction name="separator"/>
-    <addaction name="actionHideDebugger"/>
+    <addaction name="menuAdvanced"/>
    </widget>
    <widget class="QMenu" name="menuHelp">
     <property name="title">
@@ -165,6 +157,12 @@
     <property name="title">
      <string>&amp;Options</string>
     </property>
+    <widget class="QMenu" name="menuTheme">
+     <property name="title">
+      <string>&amp;Theme</string>
+     </property>
+     <addaction name="actionDefaultTheme"/>
+    </widget>
     <addaction name="actionSettings"/>
     <addaction name="actionAppearance"/>
     <addaction name="actionShortcuts"/>
@@ -173,15 +171,47 @@
     <addaction name="actionReloadStylesheet"/>
     <addaction name="actionSetInitializationScript"/>
     <addaction name="actionImportSettings"/>
+    <addaction name="menuTheme"/>
    </widget>
    <widget class="QMenu" name="menuFavourites">
     <property name="title">
      <string>Favour&amp;ites</string>
     </property>
    </widget>
+   <widget class="QMenu" name="menu_Trace">
+    <property name="title">
+     <string>&amp;Trace</string>
+    </property>
+    <widget class="QMenu" name="menuTrace_record">
+     <property name="title">
+      <string>Trace record</string>
+     </property>
+     <property name="icon">
+      <iconset resource="../../resource.qrc">
+       <normaloff>:/icons/images/trace.png</normaloff>:/icons/images/trace.png</iconset>
+     </property>
+     <addaction name="actionTRBit"/>
+     <addaction name="actionTRByte"/>
+     <addaction name="actionTRWord"/>
+     <addaction name="actionTRNone"/>
+     <addaction name="separator"/>
+     <addaction name="actionTRTIBT"/>
+     <addaction name="actionTRTOBT"/>
+     <addaction name="actionTRTIIT"/>
+     <addaction name="actionTRTOIT"/>
+    </widget>
+    <addaction name="actionAnimateInto"/>
+    <addaction name="actionAnimateOver"/>
+    <addaction name="actionAnimateCommand"/>
+    <addaction name="separator"/>
+    <addaction name="actionTicnd"/>
+    <addaction name="actionTocnd"/>
+    <addaction name="menuTrace_record"/>
+   </widget>
    <addaction name="menuFile"/>
    <addaction name="menuView"/>
    <addaction name="menuDebug"/>
+   <addaction name="menu_Trace"/>
    <addaction name="menuPlugins"/>
    <addaction name="menuFavourites"/>
    <addaction name="menuOptions"/>
@@ -793,15 +823,6 @@
     <string>Notes</string>
    </property>
   </action>
-  <action name="actionSnowman">
-   <property name="icon">
-    <iconset resource="../../resource.qrc">
-     <normaloff>:/icons/images/snowman.png</normaloff>:/icons/images/snowman.png</iconset>
-   </property>
-   <property name="text">
-    <string>Snowman</string>
-   </property>
-  </action>
   <action name="actionHandles">
    <property name="icon">
     <iconset resource="../../resource.qrc">
@@ -937,7 +958,7 @@
   <action name="actionCrashDump">
    <property name="icon">
     <iconset resource="../../resource.qrc">
-     <normaloff>:/icons/images/fatal-error.png</normaloff>:/icons/images/fatal-error.png</iconset>
+     <normaloff>:/icons/images/crash_dump.png</normaloff>:/icons/images/crash_dump.png</iconset>
    </property>
    <property name="text">
     <string>Generate crash dump</string>
@@ -1105,6 +1126,24 @@
     <string>Next Tab</string>
    </property>
   </action>
+  <action name="actionPreviousView">
+   <property name="icon">
+    <iconset resource="../../resource.qrc">
+     <normaloff>:/icons/images/previous.png</normaloff>:/icons/images/previous.png</iconset>
+   </property>
+   <property name="text">
+    <string>Previous View</string>
+   </property>
+  </action>
+  <action name="actionNextView">
+   <property name="icon">
+    <iconset resource="../../resource.qrc">
+     <normaloff>:/icons/images/next.png</normaloff>:/icons/images/next.png</iconset>
+   </property>
+   <property name="text">
+    <string>Next View</string>
+   </property>
+  </action>
   <action name="actionHideTab">
    <property name="icon">
     <iconset resource="../../resource.qrc">
@@ -1139,6 +1178,34 @@
    </property>
    <property name="text">
     <string>Plugins</string>
+   </property>
+  </action>
+  <action name="actionTrace">
+   <property name="icon">
+    <iconset resource="../../resource.qrc">
+     <normaloff>:/icons/images/trace.png</normaloff>:/icons/images/trace.png</iconset>
+   </property>
+   <property name="text">
+    <string>Trace</string>
+   </property>
+  </action>
+  <action name="actionModules">
+   <property name="icon">
+    <iconset resource="../../resource.qrc">
+     <normaloff>:/icons/images/lib.png</normaloff>:/icons/images/lib.png</iconset>
+   </property>
+   <property name="text">
+    <string>Modules</string>
+   </property>
+  </action>
+  <action name="action_Theme">
+   <property name="text">
+    <string>&amp;Theme</string>
+   </property>
+  </action>
+  <action name="actionDefaultTheme">
+   <property name="text">
+    <string>&amp;Default</string>
    </property>
   </action>
  </widget>

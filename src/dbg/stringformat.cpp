@@ -157,7 +157,7 @@ static unsigned int getArgNumType(const String & formatString, ValueType & type)
     String complexArgs;
     auto expression = getArgExpressionType(formatString, type, complexArgs);
     unsigned int argnum = 0;
-    if(!expression || sscanf(expression, "%u", &argnum) != 1)
+    if(!expression || sscanf_s(expression, "%u", &argnum) != 1)
         type = ValueType::Unknown;
     return argnum;
 }
@@ -173,7 +173,6 @@ static String handleFormatString(const String & formatString, const FormatValueV
 
 String stringformat(String format, const FormatValueVector & values)
 {
-    StringUtils::ReplaceAll(format, "\\n", "\n");
     int len = (int)format.length();
     String output;
     String formatString;
@@ -247,7 +246,6 @@ static String handleFormatStringInline(const String & formatString)
 
 String stringformatinline(String format)
 {
-    StringUtils::ReplaceAll(format, "\\n", "\n");
     int len = (int)format.length();
     String output;
     String formatString;

@@ -6,6 +6,7 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include "MiscUtil.h"
+#include "Configuration.h"
 #include <QTableWidget>
 
 FavouriteTools::FavouriteTools(QWidget* parent) :
@@ -124,7 +125,7 @@ void FavouriteTools::on_btnAddFavouriteTool_clicked()
     memset(buffer, 0, sizeof(buffer));
     BridgeSettingGet("Favourite", "LastToolPath", buffer);
     BrowseDialog browse(this, tr("Browse tool"), tr("Enter the path of the tool."), tr("Executable Files (*.exe);;All Files (*.*)"), QString(buffer), false);
-    if(browse.exec() != QDialog::Accepted && browse.path.length())
+    if(browse.exec() != QDialog::Accepted || browse.path.length() == 0)
         return;
     filename = browse.path;
     BridgeSettingSet("Favourite", "LastToolPath", filename.toUtf8().constData());

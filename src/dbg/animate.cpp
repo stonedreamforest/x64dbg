@@ -31,6 +31,7 @@ bool _dbg_animatecommand(const char* command)
 {
     if(command) // Animate command
     {
+        GuiAddStatusBarMessage(GuiTranslateText(QT_TRANSLATE_NOOP("DBG", "Animation started. Use the \"pause\" command to stop animation.")));
         strcpy_s(animate_command, command);
         if(hAnimateThread == nullptr)
         {
@@ -46,10 +47,7 @@ bool _dbg_animatecommand(const char* command)
 
 void _dbg_setanimateinterval(unsigned int milliseconds)
 {
-    if(milliseconds <= 20)
-        animate_interval = 20;
-    else
-        animate_interval = milliseconds;
+    animate_interval = milliseconds;
 }
 
 bool _dbg_isanimating()

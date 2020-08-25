@@ -13,8 +13,8 @@ CPUStack::CPUStack(CPUMultiDump* multiDump, QWidget* parent) : HexDump(parent)
     setWindowTitle("Stack");
     setShowHeader(false);
     int charwidth = getCharWidth();
-    ColumnDescriptor_t wColDesc;
-    DataDescriptor_t dDesc;
+    ColumnDescriptor wColDesc;
+    DataDescriptor dDesc;
     bStackFrozen = false;
     mMultiDump = multiDump;
 
@@ -61,9 +61,9 @@ void CPUStack::updateColors()
 {
     HexDump::updateColors();
 
-    backgroundColor = ConfigColor("StackBackgroundColor");
-    textColor = ConfigColor("StackTextColor");
-    selectionColor = ConfigColor("StackSelectionColor");
+    mBackgroundColor = ConfigColor("StackBackgroundColor");
+    mTextColor = ConfigColor("StackTextColor");
+    mSelectionColor = ConfigColor("StackSelectionColor");
     mStackReturnToColor = ConfigColor("StackReturnToColor");
     mStackSEHChainColor = ConfigColor("StackSEHChainColor");
     mUserStackFrameColor = ConfigColor("StackFrameColor");
@@ -208,7 +208,7 @@ void CPUStack::setupContextMenu()
 
     //Follow CSP
     mMenuBuilder->addAction(makeShortcutAction(DIcon("neworigin.png"), ArchValue(tr("Follow E&SP"), tr("Follow R&SP")), SLOT(gotoCspSlot()), "ActionGotoOrigin"));
-    mMenuBuilder->addAction(makeAction(DIcon("cbp.png"), ArchValue(tr("Follow E&BP"), tr("Follow R&BP")), SLOT(gotoCbpSlot())), [this](QMenu*)
+    mMenuBuilder->addAction(makeShortcutAction(DIcon("cbp.png"), ArchValue(tr("Follow E&BP"), tr("Follow R&BP")), SLOT(gotoCbpSlot()), "ActionGotoCBP"), [this](QMenu*)
     {
         return DbgMemIsValidReadPtr(DbgValFromString("cbp"));
     });
@@ -339,9 +339,9 @@ void CPUStack::getColumnRichText(int col, dsint rva, RichTextPainter::List & ric
 
     STACK_COMMENT comment;
     RichTextPainter::CustomRichText_t curData;
-    curData.highlight = false;
+    curData.underline = false;
     curData.flags = RichTextPainter::FlagColor;
-    curData.textColor = textColor;
+    curData.textColor = mTextColor;
 
     if(col && mDescriptor.at(col - 1).isData == true) //paint stack data
     {
@@ -369,13 +369,13 @@ void CPUStack::getColumnRichText(int col, dsint rva, RichTextPainter::List & ric
                     else if(strcmp(comment.color, "!rtnclr") == 0)
                         curData.textColor = mStackReturnToColor;
                     else
-                        curData.textColor = textColor;
+                        curData.textColor = mTextColor;
                 }
                 else
                     curData.textColor = QColor(QString(comment.color));
             }
             else
-                curData.textColor = textColor;
+                curData.textColor = mTextColor;
         }
         else
             curData.textColor = ConfigColor("StackInactiveTextColor");
@@ -395,12 +395,13 @@ QString CPUStack::paintContent(QPainter* painter, dsint rowBase, int rowOffset, 
 
     bool wIsSelected = isSelected(wRva);
     if(wIsSelected) //highlight if selected
-        painter->fillRect(QRect(x, y, w, h), QBrush(selectionColor));
+        painter->fillRect(QRect(x, y, w, h), QBrush(mSelectionColor));
 
     if(col == 0) // paint stack address
     {
         QColor background;
-        if(DbgGetLabelAt(wVa, SEG_DEFAULT, nullptr)) //label
+        char labelText[MAX_LABEL_SIZE] = "";
+        if(DbgGetLabelAt(wVa, SEG_DEFAULT, labelText)) //label
         {
             if(wVa == mCsp) //CSP
             {
@@ -529,9 +530,18 @@ void CPUStack::mouseDoubleClickEvent(QMouseEvent* event)
     }
     break;
 
-    default:
+    case 1: // value
     {
         modifySlot();
+    }
+    break;
+
+    default:
+    {
+        duint wVa = rvaToVa(getInitialSelection());
+        STACK_COMMENT comment;
+        if(DbgStackCommentGet(wVa, &comment) && strcmp(comment.color, "!rtnclr") == 0)
+            followDisasmSlot();
     }
     break;
     }
@@ -652,6 +662,7 @@ void CPUStack::gotoExpressionSlot()
     mGoto->validRangeStart = base;
     mGoto->validRangeEnd = base + size;
     mGoto->setWindowTitle(tr("Enter expression to follow in Stack..."));
+    mGoto->setInitialExpression(ToPtrString(rvaToVa(getInitialSelection())));
     if(mGoto->exec() == QDialog::Accepted)
     {
         duint value = DbgValFromString(mGoto->expressionText.toUtf8().constData());
@@ -663,7 +674,7 @@ void CPUStack::selectionGet(SELECTIONDATA* selection)
 {
     selection->start = rvaToVa(getSelectionStart());
     selection->end = rvaToVa(getSelectionEnd());
-    Bridge::getBridge()->setResult(1);
+    Bridge::getBridge()->setResult(BridgeResult::SelectionGet, 1);
 }
 
 void CPUStack::selectionSet(const SELECTIONDATA* selection)
@@ -674,13 +685,13 @@ void CPUStack::selectionSet(const SELECTIONDATA* selection)
     dsint end = selection->end;
     if(start < selMin || start >= selMax || end < selMin || end >= selMax) //selection out of range
     {
-        Bridge::getBridge()->setResult(0);
+        Bridge::getBridge()->setResult(BridgeResult::SelectionSet, 0);
         return;
     }
     setSingleSelection(start - selMin);
     expandSelectionUpTo(end - selMin);
     reloadData();
-    Bridge::getBridge()->setResult(1);
+    Bridge::getBridge()->setResult(BridgeResult::SelectionSet, 1);
 }
 void CPUStack::selectionUpdatedSlot()
 {
@@ -938,6 +949,7 @@ void CPUStack::findPattern()
 {
     HexEditDialog hexEdit(this);
     hexEdit.showEntireBlock(true);
+    hexEdit.isDataCopiable(false);
     hexEdit.mHexEdit->setOverwriteMode(false);
     hexEdit.setWindowTitle(tr("Find Pattern..."));
     if(hexEdit.exec() != QDialog::Accepted)

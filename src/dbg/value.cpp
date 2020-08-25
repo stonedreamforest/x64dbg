@@ -199,6 +199,8 @@ static bool isregister(const char* string)
 
     if(scmp(string, "lasterror"))
         return true;
+    if(scmp(string, "laststatus"))
+        return true;
 
     if(scmp(string, "gs"))
         return true;
@@ -711,6 +713,13 @@ duint getregister(int* size, const char* string)
         return error;
     }
 
+    if(scmp(string, "laststatus"))
+    {
+        duint status = 0;
+        MemReadUnsafe((duint)GetTEBLocation(hActiveThread) + ArchValue(0xBF4, 0x1250), &status, 4);
+        return status;
+    }
+
     if(size)
         *size = 2;
     if(scmp(string, "ax"))
@@ -1166,6 +1175,8 @@ bool setregister(const char* string, duint value)
 
     if(scmp(string, "lasterror"))
         return MemWrite((duint)GetTEBLocation(hActiveThread) + ArchValue(0x34, 0x68), &value, 4);
+    if(scmp(string, "laststatus"))
+        return MemWrite((duint)GetTEBLocation(hActiveThread) + ArchValue(0xBF4, 0x1250), &value, 4);
 
     if(scmp(string, "gs"))
         return SetContextDataEx(hActiveThread, UE_SEG_GS, value & 0xFFFF);
@@ -1442,7 +1453,9 @@ bool valapifromstring(const char* name, duint* value, int* value_size, bool prin
         else
         {
             strncpy_s(modname, name, _TRUNCATE);
-            modname[apiname - name] = 0;
+            auto idx = apiname - name;
+            if(idx < _countof(modname))
+                modname[idx] = '\0';
         }
         apiname++;
         if(!strlen(apiname))
@@ -1940,9 +1953,9 @@ bool valfromstring_noexpr(const char* string, duint* value, bool silent, bool ba
     else if(strstr(string, "sub_") == string) //then come sub_ functions
     {
 #ifdef _WIN64
-        bool result = sscanf(string, "sub_%llX", value) == 1;
+        bool result = sscanf_s(string, "sub_%llX", value) == 1;
 #else //x86
-        bool result = sscanf(string, "sub_%X", value) == 1;
+        bool result = sscanf_s(string, "sub_%X", value) == 1;
 #endif //_WIN64
         duint start;
         return result && FunctionGet(*value, &start, nullptr) && *value == start;
@@ -2017,6 +2030,7 @@ static bool startsWith(const char* pre, const char* str)
 #define XMM_PRE_FIELD_STRING "XMM"
 #define YMM_PRE_FIELD_STRING "YMM"
 #define x8780BITFPU_PRE_FIELD_STRING "x87r"
+#define x8780BITFPU_PRE_FIELD_STRING_ST "st"
 #define STRLEN_USING_SIZEOF(string) (sizeof(string) - 1)
 
 /**
@@ -2200,6 +2214,58 @@ static void setfpuvalue(const char* string, duint value)
         if(found)
             SetContextDataEx(hActiveThread, registerindex, value);
     }
+    else if(startsWith(x8780BITFPU_PRE_FIELD_STRING_ST, string))
+    {
+        flags = GetContextDataEx(hActiveThread, UE_X87_STATUSWORD);
+        flags >>= 11;
+        flags &= 7;
+        string += STRLEN_USING_SIZEOF(x8780BITFPU_PRE_FIELD_STRING_ST);
+        bool found = true;
+        DWORD registerindex;
+        switch(*string)
+        {
+        case '0':
+            registerindex = flags;
+            break;
+
+        case '1':
+            registerindex = ((1 + flags) & 7);
+            break;
+
+        case '2':
+            registerindex = ((2 + flags) & 7);
+            break;
+
+        case '3':
+            registerindex = ((3 + flags) & 7);
+            break;
+
+        case '4':
+            registerindex = ((4 + flags) & 7);
+            break;
+
+        case '5':
+            registerindex = ((5 + flags) & 7);
+            break;
+
+        case '6':
+            registerindex = ((6 + flags) & 7);
+            break;
+
+        case '7':
+            registerindex = ((7 + flags) & 7);
+            break;
+
+        default:
+            found = false;
+            break;
+        }
+        if(found)
+        {
+            registerindex += UE_x87_r0;
+            SetContextDataEx(hActiveThread, registerindex, value);
+        }
+    }
     else if(startsWith(MMX_PRE_FIELD_STRING, string))
     {
         string += STRLEN_USING_SIZEOF(MMX_PRE_FIELD_STRING);
@@ -2284,7 +2350,7 @@ static void setfpuvalue(const char* string, duint value)
         case 7:
             registerindex = UE_XMM7;
             break;
-
+#ifdef _WIN64
         case 8:
             registerindex = UE_XMM8;
             break;
@@ -2316,7 +2382,7 @@ static void setfpuvalue(const char* string, duint value)
         case 15:
             registerindex = UE_XMM15;
             break;
-
+#endif
         default:
             found = false;
             break;
@@ -2362,7 +2428,7 @@ static void setfpuvalue(const char* string, duint value)
         case 7:
             registerindex = UE_YMM7;
             break;
-
+#ifdef _WIN64
         case 8:
             registerindex = UE_YMM8;
             break;
@@ -2394,7 +2460,7 @@ static void setfpuvalue(const char* string, duint value)
         case 15:
             registerindex = UE_YMM15;
             break;
-
+#endif
         default:
             registerindex = 0;
             found = false;
@@ -2555,7 +2621,7 @@ bool valtostring(const char* string, duint value, bool silent)
         int len = (int)strlen(string);
         Memory<char*> regName(len + 1, "valtostring:regname");
         strcpy_s(regName(), len + 1, string);
-        _strlwr(regName());
+        _strlwr_s(regName(), regName.size());
         if(strstr(regName(), "ip"))
         {
             auto cip = GetContextDataEx(hActiveThread, UE_CIP);

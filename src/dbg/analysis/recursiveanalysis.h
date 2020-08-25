@@ -5,7 +5,7 @@
 class RecursiveAnalysis : public Analysis
 {
 public:
-    explicit RecursiveAnalysis(duint base, duint size, duint entryPoint, duint maxDepth, bool usePlugins, bool dump = false);
+    explicit RecursiveAnalysis(duint base, duint size, duint entryPoint, bool usePlugins, bool dump = false);
     void Analyse() override;
     void SetMarkers() override;
 
@@ -71,18 +71,15 @@ public:
 
     const CFGraph* GetFunctionGraph(duint entry) const
     {
-        for(const auto & function : mFunctions)
-            if(function.entryPoint == entry)
-                return &function;
-        return nullptr;
+        auto itr = mFunctions.find(entry);
+        return itr == mFunctions.end() ? nullptr : &itr->second;
     }
 
 protected:
     duint mEntryPoint;
-    std::vector<CFGraph> mFunctions;
+    std::unordered_map<duint, CFGraph> mFunctions;
 
 private:
-    duint mMaxDepth;
     bool mUsePlugins;
     bool mDump;
 
@@ -94,5 +91,16 @@ private:
 
     std::vector<XREF> mXrefs;
 
+    struct LoopInfo
+    {
+        duint functionEntry = 0;
+        std::unordered_set<duint> trivialLoops; // loops to the same basic block
+        std::unordered_map<duint, duint> backedges; // backedges in the CFG
+    };
+
+    std::unordered_map<duint, LoopInfo> mLoopInfo;
+
     void analyzeFunction(duint entryPoint);
+    void analyzeLoops(duint entryPoint);
+    void dominatorAnalysis(duint entryPoint);
 };

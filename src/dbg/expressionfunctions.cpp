@@ -63,9 +63,11 @@ void ExpressionFunctions::Init()
     RegisterEasy("mod.entry", ModEntryFromAddr);
     RegisterEasy("mod.system,mod.issystem", modsystem);
     RegisterEasy("mod.user,mod.isuser", moduser);
-    RegisterEasy("mod.main,mod.mainbase", dbggetdebuggedbase);
+    RegisterEasy("mod.main,mod.mainbase", dbgdebuggedbase);
     RegisterEasy("mod.rva", modrva);
     RegisterEasy("mod.offset,mod.fileoffset", valvatofileoffset);
+    RegisterEasy("mod.headerva", modheaderva);
+    RegisterEasy("mod.isexport", modisexport);
 
     //Process information
     RegisterEasy("peb,PEB", peb);
@@ -82,6 +84,7 @@ void ExpressionFunctions::Init()
     RegisterEasy("mem.base", membase);
     RegisterEasy("mem.size", memsize);
     RegisterEasy("mem.iscode", memiscode);
+    RegisterEasy("mem.isstring", memisstring);
     RegisterEasy("mem.decodepointer", memdecodepointer);
 
     //Disassembly
@@ -100,10 +103,12 @@ void ExpressionFunctions::Init()
     RegisterEasy("dis.brfalse", disbrfalse);
     RegisterEasy("dis.next", disnext);
     RegisterEasy("dis.prev", disprev);
+    RegisterEasy("dis.iscallsystem", disiscallsystem);
 
     //Trace record
     RegisterEasy("tr.enabled", trenabled);
     RegisterEasy("tr.hitcount,tr.count", trhitcount);
+    RegisterEasy("tr.runtraceenabled", trisruntraceenabled);
 
     //Byte/Word/Dword/Qword/Pointer
     RegisterEasy("ReadByte,Byte,byte", readbyte);
@@ -127,6 +132,14 @@ void ExpressionFunctions::Init()
     //Arguments
     RegisterEasy("arg.get,arg", argget);
     RegisterEasy("arg.set", argset);
+
+    //Exceptions
+    RegisterEasy("ex.firstchance", exfirstchance);
+    RegisterEasy("ex.addr", exaddr);
+    RegisterEasy("ex.code", excode);
+    RegisterEasy("ex.flags", exflags);
+    RegisterEasy("ex.infocount", exinfocount);
+    RegisterEasy("ex.info", exinfo);
 
     //Undocumented
     RegisterEasy("bpgoto", bpgoto);

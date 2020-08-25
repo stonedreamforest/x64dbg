@@ -1,5 +1,5 @@
 #include "main.h"
-#include "capstone_wrapper.h"
+#include "zydis_wrapper.h"
 #include "MainWindow.h"
 #include "Configuration.h"
 #include <QTextCodec>
@@ -7,6 +7,7 @@
 #include <QTranslator>
 #include <QTextStream>
 #include <QLibraryInfo>
+#include "MiscUtil.h"
 
 MyApplication::MyApplication(int & argc, char** argv)
     : QApplication(argc, argv)
@@ -69,14 +70,7 @@ int main(int argc, char* argv[])
     qputenv("QT_AUTO_SCREEN_SCALE_FACTOR", "1");
     QGuiApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
     MyApplication application(argc, argv);
-    QFile f(QString("%1/style.css").arg(QCoreApplication::applicationDirPath()));
-    if(f.open(QFile::ReadOnly | QFile::Text))
-    {
-        QTextStream in(&f);
-        auto style = in.readAll();
-        f.close();
-        application.setStyleSheet(style);
-    }
+    MainWindow::loadSelectedStyle(true);
 #if QT_VERSION < QT_VERSION_CHECK(5,0,0)
     QAbstractEventDispatcher::instance(application.thread())->setEventFilter(MyApplication::globalEventFilter);
 #else
@@ -106,8 +100,8 @@ int main(int argc, char* argv[])
 
     TLS_TranslatedStringMap = new std::map<DWORD, TranslatedStringStorage>();
 
-    // initialize capstone
-    Capstone::GlobalInitialize();
+    // initialize Zydis
+    Zydis::GlobalInitialize();
 
     // load config file + set config font
     mConfiguration = new Configuration;
@@ -164,7 +158,7 @@ int main(int argc, char* argv[])
         delete temp;
     }
 
-    //TODO free capstone/config/bridge and prevent use after free.
+    //TODO free Zydis/config/bridge and prevent use after free.
 
     return result;
 }

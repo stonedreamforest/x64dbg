@@ -18,12 +18,27 @@ std::map<BreakpointKey, BREAKPOINT> breakpoints;
 
 static void setBpActive(BREAKPOINT & bp)
 {
-    if(bp.type == BPHARDWARE) //TODO: properly implement this (check debug registers)
+    // DLL/Exception breakpoints are always enabled
+    if(bp.type == BPDLL || bp.type == BPEXCEPTION)
+    {
         bp.active = true;
-    else if(bp.type == BPDLL || bp.type == BPEXCEPTION)
-        bp.active = true;
-    else
+        return;
+    }
+
+    // Breakpoints without modules need a valid address
+    if(!*bp.mod)
+    {
         bp.active = MemIsValidReadPtr(bp.addr);
+        return;
+    }
+    else
+    {
+        auto modLoaded = ModBaseFromName(bp.mod) != 0;
+        if(bp.type == BPHARDWARE)
+            bp.active = modLoaded;
+        else
+            bp.active = modLoaded && MemIsValidReadPtr(bp.addr);
+    }
 }
 
 BREAKPOINT* BpInfoFromAddr(BP_TYPE Type, duint Address)
@@ -173,12 +188,62 @@ bool BpGet(duint Address, BP_TYPE Type, const char* Name, BREAKPOINT* Bp)
         return true;
     }
 
+    // If name in a special format "libwinpthread-1.dll":$7792, find the breakpoint even if the DLL might not be loaded yet.
+    const char* separatorPos;
+    separatorPos = strstr(Name, ":$"); //DLL file names cannot contain ":" char anyway, so ignoring the quotes is fine. The following part of RVA expression might contain ":$"?
+    if(separatorPos && Type != BPDLL && Type != BPEXCEPTION)
+    {
+        char* DLLName = _strdup(Name);
+        char* RVAPos = DLLName + (separatorPos - Name);
+        RVAPos[0] = RVAPos[1] = '\0';
+        RVAPos = RVAPos + 2; //Now 2 strings separated by NULs
+        if(valfromstring(RVAPos, &Address)) //"Address" reused here. No usage of original "Address" argument.
+        {
+            if(separatorPos != Name)   //Check if DLL name is surrounded by quotes. Don't be out of bounds!
+            {
+                if(DLLName[0] == '"' && RVAPos[-3] == '"')
+                {
+                    RVAPos[-3] = '\0';
+                    DLLName[0] = '\0';
+                }
+            }
+            if(DLLName[0] != '\0')
+            {
+                duint base = ModBaseFromName(DLLName); //Is the DLL actually loaded?
+                Address += base ? base : ModHashFromName(DLLName);
+            }
+            else
+            {
+                duint base = ModBaseFromName(DLLName + 1);
+                Address += base ? base : ModHashFromName(DLLName + 1);
+            }
+
+            // Perform a lookup by address only
+            BREAKPOINT* bpInfo = BpInfoFromAddr(Type, Address);
+
+            if(!bpInfo)
+                return false;
+
+            // Succeed even if the user didn't request anything
+            if(!Bp)
+                return true;
+
+            *Bp = *bpInfo;
+            Bp->addr = Address;
+            setBpActive(*Bp);
+            return true;
+        }
+        free(DLLName);
+    }
+
     // Do a lookup by breakpoint name
     for(auto & i : breakpoints)
     {
-        // Do the names match?
+        // Breakpoint name match
         if(_stricmp(Name, i.second.name) != 0)
-            continue;
+            // Module name match in case of DLL Breakpoints
+            if(i.second.type != BPDLL || _stricmp(Name, i.second.mod) != 0)
+                continue;
 
         // Fill out the optional user buffer
         if(Bp)
@@ -228,29 +293,32 @@ bool BpUpdateDllPath(const char* module1, BREAKPOINT** newBpInfo)
     EXCLUSIVE_ACQUIRE(LockBreakpoints);
     for(auto & i : breakpoints)
     {
-        if(i.second.type == BPDLL && i.second.enabled)
+        BREAKPOINT & bpRef = i.second;
+        if(bpRef.type == BPDLL && bpRef.enabled)
         {
-            if(_stricmp(i.second.mod, module1) == 0)
+            if(_stricmp(bpRef.mod, module1) == 0)
             {
                 BREAKPOINT temp;
-                temp = i.second;
+                temp = bpRef;
                 strcpy_s(temp.mod, module1);
+                _strlwr_s(temp.mod, strlen(temp.mod) + 1);
                 temp.addr = ModHashFromName(module1);
                 breakpoints.erase(i.first);
                 auto newItem = breakpoints.insert(std::make_pair(BreakpointKey(BPDLL, temp.addr), temp));
                 *newBpInfo = &newItem.first->second;
                 return true;
             }
-            const char* dashPos = max(strrchr(i.second.mod, '\\'), strrchr(i.second.mod, '/'));
+            const char* dashPos = max(strrchr(bpRef.mod, '\\'), strrchr(bpRef.mod, '/'));
             if(dashPos == nullptr)
-                dashPos = i.second.mod;
+                dashPos = bpRef.mod;
             else
                 dashPos += 1;
             if(dashPos1 != nullptr && _stricmp(dashPos, dashPos1 + 1) == 0) // filename matches
             {
                 BREAKPOINT temp;
-                temp = i.second;
+                temp = bpRef;
                 strcpy_s(temp.mod, dashPos1 + 1);
+                _strlwr_s(temp.mod, strlen(temp.mod) + 1);
                 temp.addr = ModHashFromName(dashPos1 + 1);
                 breakpoints.erase(i.first);
                 auto newItem = breakpoints.insert(std::make_pair(BreakpointKey(BPDLL, temp.addr), temp));
@@ -640,6 +708,21 @@ void BpToBridge(const BREAKPOINT* Bp, BRIDGEBP* BridgeBp)
         break;
     case BPMEMORY:
         BridgeBp->type = bp_memory;
+        switch(Bp->titantype)
+        {
+        case UE_MEMORY_READ:
+            BridgeBp->typeEx = mem_read;
+            break;
+        case UE_MEMORY_WRITE:
+            BridgeBp->typeEx = mem_write;
+            break;
+        case UE_MEMORY_EXECUTE:
+            BridgeBp->typeEx = mem_execute;
+            break;
+        case UE_MEMORY:
+            BridgeBp->typeEx = mem_access;
+            break;
+        }
         break;
     case BPDLL:
         BridgeBp->type = bp_dll;
@@ -670,7 +753,7 @@ void BpToBridge(const BREAKPOINT* Bp, BRIDGEBP* BridgeBp)
             BridgeBp->typeEx = ex_all;
             break;
         default:
-            __debugbreak();
+            dprintf_untranslated("Invalid titantype for exception breakpoint %u\n", Bp->titantype);
         }
         break;
     default:
@@ -760,6 +843,8 @@ void BpCacheLoad(JSON Root)
         breakpoint.addr = (duint)json_hex_value(json_object_get(value, "address"));
         breakpoint.enabled = json_boolean_value(json_object_get(value, "enabled"));
         breakpoint.titantype = (DWORD)json_hex_value(json_object_get(value, "titantype"));
+        if(breakpoint.type == BPHARDWARE)
+            TITANSETDRX(breakpoint.titantype, UE_DR7); // DR7 is used as a sentinel value to prevent wrongful deletion
 
         // String values
         loadStringValue(value, breakpoint.name, "name");

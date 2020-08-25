@@ -29,6 +29,8 @@
 #include "thread.h"
 #include "comment.h"
 #include "exception.h"
+#include "database.h"
+#include "dbghelp_safe.h"
 
 static DBGFUNCTIONS _dbgfunctions;
 
@@ -101,7 +103,8 @@ static bool _patchrestore(duint addr)
 
 static void _getcallstack(DBGCALLSTACK* callstack)
 {
-    stackgetcallstack(GetContextDataEx(hActiveThread, UE_CSP), (CALLSTACK*)callstack);
+    if(hActiveThread)
+        stackgetcallstack(GetContextDataEx(hActiveThread, UE_CSP), (CALLSTACK*)callstack);
 }
 
 static void _getsehchain(DBGSEHCHAIN* sehchain)
@@ -135,7 +138,7 @@ static bool _getcmdline(char* cmd_line, size_t* cbsize)
     if(!cmd_line && cbsize)
         *cbsize = strlen(cmdline) + sizeof(char);
     else if(cmd_line)
-        strcpy(cmd_line, cmdline);
+        memcpy(cmd_line, cmdline, strlen(cmdline) + 1);
     efree(cmdline, "_getcmdline:cmdline");
     return true;
 }
@@ -194,15 +197,17 @@ static void _memupdatemap()
 
 static duint _getaddrfromline(const char* szSourceFile, int line, duint* disp)
 {
-    LONG displacement = 0;
-    IMAGEHLP_LINE64 lineData;
-    memset(&lineData, 0, sizeof(lineData));
-    lineData.SizeOfStruct = sizeof(lineData);
-    if(!SymGetLineFromName64(fdProcessInfo->hProcess, NULL, szSourceFile, line, &displacement, &lineData))
-        return 0;
     if(disp)
-        *disp = displacement;
-    return (duint)lineData.Address;
+        *disp = 0;
+    return 0;
+}
+
+static duint _getaddrfromlineex(duint mod, const char* szSourceFile, int line)
+{
+    duint addr = 0;
+    if(SymGetSourceAddr(mod, szSourceFile, line, &addr))
+        return addr;
+    return 0;
 }
 
 static bool _getsourcefromaddr(duint addr, char* szSourceFile, int* line)
@@ -287,8 +292,8 @@ static bool _gethandlename(duint handle, char* name, size_t nameSize, char* type
     String typeNameS;
     if(!HandlesGetName(fdProcessInfo->hProcess, HANDLE(handle), nameS, typeNameS))
         return false;
-    strcpy_s(name, nameSize, nameS.c_str());
-    strcpy_s(typeName, typeNameSize, typeNameS.c_str());
+    strncpy_s(name, nameSize, nameS.c_str(), _TRUNCATE);
+    strncpy_s(typeName, typeNameSize, typeNameS.c_str(), _TRUNCATE);
     return true;
 }
 
@@ -369,6 +374,89 @@ static bool _modrelocationsinrange(duint addr, duint size, ListOf(DBGRELOCATIONI
     return true;
 }
 
+static int SymAutoComplete(const char* Search, char** Buffer, int MaxSymbols)
+{
+    //TODO: refactor this in a function because this pattern will become common
+    std::vector<duint> mods;
+    ModEnum([&mods](const MODINFO & info)
+    {
+        mods.push_back(info.base);
+    });
+
+    std::unordered_set<std::string> visited;
+
+    static const bool caseSensitiveAutoComplete = settingboolget("Gui", "CaseSensitiveAutoComplete");
+
+    int count = 0;
+    std::string prefix(Search);
+    for(duint base : mods)
+    {
+        if(count == MaxSymbols)
+            break;
+
+        SHARED_ACQUIRE(LockModules);
+        auto modInfo = ModInfoFromAddr(base);
+        if(!modInfo)
+            continue;
+
+        auto addName = [Buffer, MaxSymbols, &visited, &count](const std::string & name)
+        {
+            if(visited.count(name))
+                return true;
+            visited.insert(name);
+            Buffer[count] = (char*)BridgeAlloc(name.size() + 1);
+            memcpy(Buffer[count], name.c_str(), name.size() + 1);
+            return ++count < MaxSymbols;
+        };
+
+        NameIndex::findByPrefix(modInfo->exportsByName, prefix, [modInfo, &addName](const NameIndex & index)
+        {
+            return addName(modInfo->exports[index.index].name);
+        }, caseSensitiveAutoComplete);
+
+        if(count == MaxSymbols)
+            break;
+
+        if(modInfo->symbols->isOpen())
+        {
+            modInfo->symbols->findSymbolsByPrefix(prefix, [&addName](const SymbolInfo & symInfo)
+            {
+                return addName(symInfo.decoratedName);
+            }, caseSensitiveAutoComplete);
+        }
+    }
+
+    std::stable_sort(Buffer, Buffer + count, [](const char* a, const char* b)
+    {
+        return (caseSensitiveAutoComplete ? strcmp : StringUtils::hackicmp)(a, b) < 0;
+    });
+
+    return count;
+}
+
+MODULESYMBOLSTATUS _modsymbolstatus(duint base)
+{
+    SHARED_ACQUIRE(LockModules);
+    auto modInfo = ModInfoFromAddr(base);
+    if(!modInfo)
+        return MODSYMUNLOADED;
+    bool isOpen = modInfo->symbols->isOpen();
+    bool isLoading = modInfo->symbols->isLoading();
+    if(isOpen && !isLoading)
+        return MODSYMLOADED;
+    else if(isOpen && isLoading)
+        return MODSYMLOADING;
+    else if(!isOpen && symbolDownloadingBase == base)
+        return MODSYMLOADING;
+    else
+        return MODSYMUNLOADED;
+}
+
+static void _refreshmodulelist()
+{
+    SymUpdateModuleList();
+}
+
 void dbgfunctionsinit()
 {
     _dbgfunctions.AssembleAtEx = _assembleatex;
@@ -402,7 +490,7 @@ void dbgfunctionsinit()
     _dbgfunctions.GetPageRights = MemGetPageRights;
     _dbgfunctions.SetPageRights = MemSetPageRights;
     _dbgfunctions.PageRightsToString = MemPageRightsToString;
-    _dbgfunctions.IsProcessElevated = IsProcessElevated;
+    _dbgfunctions.IsProcessElevated = BridgeIsProcessElevated;
     _dbgfunctions.GetCmdline = _getcmdline;
     _dbgfunctions.SetCmdline = _setcmdline;
     _dbgfunctions.FileOffsetToVa = valfileoffsettova;
@@ -439,4 +527,9 @@ void dbgfunctionsinit()
     _dbgfunctions.ModRelocationsFromAddr = _modrelocationsfromaddr;
     _dbgfunctions.ModRelocationAtAddr = (MODRELOCATIONATADDR)ModRelocationAtAddr;
     _dbgfunctions.ModRelocationsInRange = _modrelocationsinrange;
+    _dbgfunctions.DbGetHash = DbGetHash;
+    _dbgfunctions.SymAutoComplete = SymAutoComplete;
+    _dbgfunctions.RefreshModuleList = _refreshmodulelist;
+    _dbgfunctions.GetAddrFromLineEx = _getaddrfromlineex;
+    _dbgfunctions.ModSymbolStatus = _modsymbolstatus;
 }

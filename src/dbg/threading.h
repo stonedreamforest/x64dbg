@@ -6,7 +6,6 @@
 enum WAIT_ID
 {
     WAITID_RUN,
-    WAITID_STOP,
     WAITID_LAST
 };
 
@@ -73,6 +72,7 @@ enum SectionLock
     LockTypeManager,
     LockModuleHashes,
     LockFormatFunctions,
+    LockDllBreakpoints,
 
     // Number of elements in this enumeration. Must always be the last index.
     LockLast
@@ -94,6 +94,9 @@ private:
         {
             if(Shared)
             {
+                if(m_owner[LockIndex].thread == GetCurrentThreadId())
+                    return;
+
                 m_AcquireSRWLockShared(&m_srwLocks[LockIndex]);
                 return;
             }
@@ -106,6 +109,7 @@ private:
             }
 
             m_AcquireSRWLockExclusive(&m_srwLocks[LockIndex]);
+
             assert(m_owner[LockIndex].thread == 0);
             assert(m_owner[LockIndex].count == 0);
             m_owner[LockIndex].thread = GetCurrentThreadId();
@@ -121,12 +125,16 @@ private:
         {
             if(Shared)
             {
+                if(m_owner[LockIndex].thread == GetCurrentThreadId())
+                    return;
+
                 m_ReleaseSRWLockShared(&m_srwLocks[LockIndex]);
                 return;
             }
 
             assert(m_owner[LockIndex].count && m_owner[LockIndex].thread);
             m_owner[LockIndex].count--;
+
             if(m_owner[LockIndex].count == 0)
             {
                 m_owner[LockIndex].thread = 0;

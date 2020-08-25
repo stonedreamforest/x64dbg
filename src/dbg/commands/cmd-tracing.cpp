@@ -6,6 +6,8 @@
 #include "console.h"
 #include "cmd-debug-control.h"
 #include "value.h"
+#include "variable.h"
+#include "TraceRecord.h"
 
 extern std::vector<std::pair<duint, duint>> RunToUserCodeBreakpoints;
 
@@ -31,7 +33,7 @@ static bool cbDebugConditionalTrace(void(*callback)(), bool stepOver, int argc, 
     HistoryClear();
 
     if(stepOver)
-        StepOver((void*)callback);
+        StepOverWrapper((void*)callback);
     else
         StepIntoWow64((void*)callback);
     return cbDebugRunInternal(1, argv);
@@ -167,4 +169,16 @@ bool cbDebugTraceSetLogFile(int argc, char* argv[])
 {
     auto fileName = argc > 1 ? argv[1] : "";
     return dbgsettracelogfile(fileName);
+}
+
+bool cbDebugStartRunTrace(int argc, char* argv[])
+{
+    if(IsArgumentsLessThan(argc, 2))
+        return false;
+    return _dbg_dbgenableRunTrace(true, argv[1]);
+}
+
+bool cbDebugStopRunTrace(int argc, char* argv[])
+{
+    return _dbg_dbgenableRunTrace(false, nullptr);
 }

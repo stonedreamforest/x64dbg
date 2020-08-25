@@ -1,6 +1,14 @@
 #include "xrefsanalysis.h"
 #include "xrefs.h"
 #include "console.h"
+#include <module.h>
+
+XrefsAnalysis::XrefsAnalysis(duint base, duint size)
+    : Analysis(base, size)
+{
+    modbase = ModBaseFromAddr(base);
+    modsize = ModSizeFromAddr(modbase);
+}
 
 void XrefsAnalysis::Analyse()
 {
@@ -21,11 +29,11 @@ void XrefsAnalysis::Analyse()
         xref.from = mCp.Address();
         for(auto i = 0; i < mCp.OpCount(); i++)
         {
-            duint dest = mCp.ResolveOpValue(i, [](x86_reg)->size_t
+            duint dest = mCp.ResolveOpValue(i, [](ZydisRegister)->size_t
             {
                 return 0;
             });
-            if(inRange(dest))
+            if(inModRange(dest))
             {
                 xref.addr = dest;
                 break;

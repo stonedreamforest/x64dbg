@@ -1,13 +1,19 @@
 #include "TraceRecord.h"
-#include "capstone_wrapper.h"
 #include "module.h"
 #include "memory.h"
 #include "threading.h"
+#include "thread.h"
+#include "disasm_helper.h"
+#include "disasm_fast.h"
 #include "plugin_loader.h"
+#include "stringformat.h"
+#include "value.h"
+
+#define MAX_INSTRUCTIONS_TRACED_FULL_REG_DUMP 512
 
 TraceRecordManager TraceRecord;
 
-TraceRecordManager::TraceRecordManager() : instructionCounter(0)
+TraceRecordManager::TraceRecordManager()
 {
     ModuleNames.emplace_back("");
 }
@@ -193,6 +199,237 @@ void TraceRecordManager::TraceExecute(duint address, duint size)
     }
 }
 
+//See https://www.felixcloutier.com/x86/FXSAVE.html, max 512 bytes
+#define memoryContentSize 512
+
+static void HandleZydisOperand(const Zydis & cp, int opindex, DISASM_ARGTYPE* argType, duint* value, unsigned char memoryContent[memoryContentSize], unsigned char* memorySize)
+{
+    *value = cp.ResolveOpValue(opindex, [&cp](ZydisRegister reg)
+    {
+        auto regName = cp.RegName(reg);
+        return regName ? getregister(nullptr, regName) : 0; //TODO: temporary needs enums + caching
+    });
+    const auto & op = cp[opindex];
+    switch(op.type)
+    {
+    case ZYDIS_OPERAND_TYPE_REGISTER:
+        *argType = arg_normal;
+        break;
+
+    case ZYDIS_OPERAND_TYPE_IMMEDIATE:
+        *argType = arg_normal;
+        break;
+
+    case ZYDIS_OPERAND_TYPE_POINTER:
+        *argType = arg_normal;
+        break;
+
+    case ZYDIS_OPERAND_TYPE_MEMORY:
+    {
+        *argType = arg_memory;
+        const auto & mem = op.mem;
+        if(mem.segment == ArchValue(ZYDIS_REGISTER_FS, ZYDIS_REGISTER_GS))
+        {
+            *value += ThreadGetLocalBase(ThreadGetId(hActiveThread));
+        }
+        *memorySize = op.size / 8;
+        if(*memorySize <= memoryContentSize && DbgMemIsValidReadPtr(*value))
+        {
+            MemRead(*value, memoryContent, max(op.size / 8, sizeof(duint)));
+        }
+    }
+    break;
+
+    default:
+        __debugbreak();
+    }
+}
+
+void TraceRecordManager::TraceExecuteRecord(const Zydis & newInstruction)
+{
+    if(!isRunTraceEnabled())
+        return;
+    unsigned char WriteBuffer[3072];
+    unsigned char* WriteBufferPtr = WriteBuffer;
+    //Get current data
+    REGDUMPWORD newContext;
+    //DISASM_INSTR newInstruction;
+    DWORD newThreadId;
+    const size_t memoryArrayCount = 32;
+    duint newMemory[memoryArrayCount];
+    duint newMemoryAddress[memoryArrayCount];
+    duint oldMemory[memoryArrayCount];
+    unsigned char newMemoryArrayCount = 0;
+    DbgGetRegDumpEx(&newContext.registers, sizeof(REGDUMP));
+    newThreadId = ThreadGetId(hActiveThread);
+    // Don't try to resolve memory values for invalid/lea/nop instructions
+    if(newInstruction.Success() && !newInstruction.IsNop() && newInstruction.GetId() != ZYDIS_MNEMONIC_LEA)
+    {
+        DISASM_ARGTYPE argType;
+        duint value;
+        unsigned char memoryContent[memoryContentSize];
+        unsigned char memorySize;
+        for(int i = 0; i < newInstruction.OpCount(); i++)
+        {
+            memset(memoryContent, 0, sizeof(memoryContent));
+            HandleZydisOperand(newInstruction, i, &argType, &value, memoryContent, &memorySize);
+            // check for overflow of the memory buffer
+            if(newMemoryArrayCount * sizeof(duint) + memorySize > memoryArrayCount * sizeof(duint))
+                continue;
+            // TODO: Implicit memory access by push and pop instructions
+            // TODO: Support memory value of ??? for invalid memory access
+            if(argType == arg_memory)
+            {
+                if(memorySize <= sizeof(duint))
+                {
+                    memcpy(&newMemory[newMemoryArrayCount], memoryContent, sizeof(duint));
+                    newMemoryAddress[newMemoryArrayCount] = value;
+                    newMemoryArrayCount++;
+                }
+                else
+                    for(unsigned char index = 0; index < memorySize / sizeof(duint) + ((memorySize % sizeof(duint)) > 0 ? 1 : 0); index++)
+                    {
+                        memcpy(&newMemory[newMemoryArrayCount], memoryContent + sizeof(duint) * index, sizeof(duint));
+                        newMemoryAddress[newMemoryArrayCount] = value + sizeof(duint) * index;
+                        newMemoryArrayCount++;
+                    }
+            }
+        }
+        if(newInstruction.GetId() == ZYDIS_MNEMONIC_PUSH || newInstruction.GetId() == ZYDIS_MNEMONIC_PUSHF || newInstruction.GetId() == ZYDIS_MNEMONIC_PUSHFD
+                || newInstruction.GetId() == ZYDIS_MNEMONIC_PUSHFQ || newInstruction.GetId() == ZYDIS_MNEMONIC_CALL //TODO: far call accesses 2 stack entries
+          )
+        {
+            MemRead(newContext.registers.regcontext.csp - sizeof(duint), &newMemory[newMemoryArrayCount], sizeof(duint));
+            newMemoryAddress[newMemoryArrayCount] = newContext.registers.regcontext.csp - sizeof(duint);
+            newMemoryArrayCount++;
+        }
+        else if(newInstruction.GetId() == ZYDIS_MNEMONIC_POP || newInstruction.GetId() == ZYDIS_MNEMONIC_POPF || newInstruction.GetId() == ZYDIS_MNEMONIC_POPFD
+                || newInstruction.GetId() == ZYDIS_MNEMONIC_POPFQ || newInstruction.GetId() == ZYDIS_MNEMONIC_RET)
+        {
+            MemRead(newContext.registers.regcontext.csp, &newMemory[newMemoryArrayCount], sizeof(duint));
+            newMemoryAddress[newMemoryArrayCount] = newContext.registers.regcontext.csp;
+            newMemoryArrayCount++;
+        }
+        //TODO: PUSHAD/POPAD
+        assert(newMemoryArrayCount < memoryArrayCount);
+    }
+    if(rtPrevInstAvailable)
+    {
+        for(unsigned char i = 0; i < rtOldMemoryArrayCount; i++)
+        {
+            MemRead(rtOldMemoryAddress[i], oldMemory + i, sizeof(duint));
+        }
+        //Delta compress registers
+        //Data layout is Structure of Arrays to gather the same type of data in continuous memory to improve RLE compression performance.
+        //1byte:block type,1byte:reg changed count,1byte:memory accessed count,1byte:flags,4byte/none:threadid,string:opcode,1byte[]:position,ptrbyte[]:regvalue,1byte[]:flags,ptrbyte[]:address,ptrbyte[]:oldmem,ptrbyte[]:newmem
+
+        //Always record state of LAST INSTRUCTION! (NOT current instruction)
+        unsigned char changed = 0;
+        for(unsigned char i = 0; i < _countof(rtOldContext.regword); i++)
+        {
+            //rtRecordedInstructions - 1 hack: always record full registers dump at first instruction (recorded at 2nd instruction execution time)
+            //prints ASCII table in run trace at first instruction :)
+            if(rtOldContext.regword[i] != newContext.regword[i] || rtOldContextChanged[i] || ((rtRecordedInstructions - 1) % MAX_INSTRUCTIONS_TRACED_FULL_REG_DUMP == 0))
+                changed++;
+        }
+        unsigned char blockFlags = 0;
+        if(newThreadId != rtOldThreadId || ((rtRecordedInstructions - 1) % MAX_INSTRUCTIONS_TRACED_FULL_REG_DUMP == 0))
+            blockFlags = 0x80;
+        blockFlags |= rtOldOpcodeSize;
+
+        WriteBufferPtr[0] = 0; //1byte: block type
+        WriteBufferPtr[1] = changed; //1byte: registers changed
+        WriteBufferPtr[2] = rtOldMemoryArrayCount; //1byte: memory accesses count
+        WriteBufferPtr[3] = blockFlags; //1byte: flags and opcode size
+        WriteBufferPtr += 4;
+        if(newThreadId != rtOldThreadId || rtNeedThreadId || ((rtRecordedInstructions - 1) % MAX_INSTRUCTIONS_TRACED_FULL_REG_DUMP == 0))
+        {
+            memcpy(WriteBufferPtr, &rtOldThreadId, sizeof(rtOldThreadId));
+            WriteBufferPtr += sizeof(rtOldThreadId);
+            rtNeedThreadId = (newThreadId != rtOldThreadId);
+        }
+        memcpy(WriteBufferPtr, rtOldOpcode, rtOldOpcodeSize);
+        WriteBufferPtr += rtOldOpcodeSize;
+        int lastChangedPosition = -1; //-1
+        for(int i = 0; i < _countof(rtOldContext.regword); i++) //1byte: position
+        {
+            if(rtOldContext.regword[i] != newContext.regword[i] || rtOldContextChanged[i] || ((rtRecordedInstructions - 1) % MAX_INSTRUCTIONS_TRACED_FULL_REG_DUMP == 0))
+            {
+                WriteBufferPtr[0] = (unsigned char)(i - lastChangedPosition - 1);
+                WriteBufferPtr++;
+                lastChangedPosition = i;
+            }
+        }
+        for(unsigned char i = 0; i < _countof(rtOldContext.regword); i++) //ptrbyte: newvalue
+        {
+            if(rtOldContext.regword[i] != newContext.regword[i] || rtOldContextChanged[i] || ((rtRecordedInstructions - 1) % MAX_INSTRUCTIONS_TRACED_FULL_REG_DUMP == 0))
+            {
+                memcpy(WriteBufferPtr, &rtOldContext.regword[i], sizeof(duint));
+                WriteBufferPtr += sizeof(duint);
+            }
+            rtOldContextChanged[i] = (rtOldContext.regword[i] != newContext.regword[i]);
+        }
+        for(unsigned char i = 0; i < rtOldMemoryArrayCount; i++) //1byte: flags
+        {
+            unsigned char memoryOperandFlags = 0;
+            if(rtOldMemory[i] == oldMemory[i]) //bit 0: memory is unchanged, no new memory is saved
+                memoryOperandFlags |= 1;
+            //proposed flags: is memory valid, is memory zero
+            WriteBufferPtr[0] = memoryOperandFlags;
+            WriteBufferPtr += 1;
+        }
+        for(unsigned char i = 0; i < rtOldMemoryArrayCount; i++) //ptrbyte: address
+        {
+            memcpy(WriteBufferPtr, &rtOldMemoryAddress[i], sizeof(duint));
+            WriteBufferPtr += sizeof(duint);
+        }
+        for(unsigned char i = 0; i < rtOldMemoryArrayCount; i++) //ptrbyte: old content
+        {
+            memcpy(WriteBufferPtr, &rtOldMemory[i], sizeof(duint));
+            WriteBufferPtr += sizeof(duint);
+        }
+        for(unsigned char i = 0; i < rtOldMemoryArrayCount; i++) //ptrbyte: new content
+        {
+            if(rtOldMemory[i] != oldMemory[i])
+            {
+                memcpy(WriteBufferPtr, &oldMemory[i], sizeof(duint));
+                WriteBufferPtr += sizeof(duint);
+            }
+        }
+    }
+    //Switch context buffers
+    rtOldThreadId = newThreadId;
+    rtOldContext = newContext;
+    rtOldMemoryArrayCount = newMemoryArrayCount;
+    memcpy(rtOldMemory, newMemory, sizeof(newMemory));
+    memcpy(rtOldMemoryAddress, newMemoryAddress, sizeof(newMemoryAddress));
+    memset(rtOldOpcode, 0, 16);
+    rtOldOpcodeSize = newInstruction.Size() & 0x0F;
+    MemRead(newContext.registers.regcontext.cip, rtOldOpcode, rtOldOpcodeSize);
+    //Write to file
+    if(rtPrevInstAvailable)
+    {
+        if(WriteBufferPtr - WriteBuffer <= sizeof(WriteBuffer))
+        {
+            DWORD written;
+            WriteFile(rtFile, WriteBuffer, WriteBufferPtr - WriteBuffer, &written, NULL);
+            if(written < DWORD(WriteBufferPtr - WriteBuffer)) //Disk full?
+            {
+                CloseHandle(rtFile);
+                String error = stringformatinline(StringUtils::sprintf("{winerror@%d}", GetLastError()));
+                dprintf(QT_TRANSLATE_NOOP("DBG", "Run trace has stopped unexpectedly because WriteFile() failed. GetLastError() = %s.\r\n"), error.c_str());
+                rtEnabled = false;
+            }
+        }
+        else
+            __debugbreak(); // Buffer overrun?
+    }
+    rtPrevInstAvailable = true;
+    rtRecordedInstructions++;
+
+    dbgtracebrowserneedsupdate();
+}
+
 unsigned int TraceRecordManager::getHitCount(duint address)
 {
     SHARED_ACQUIRE(LockTraceRecord);
@@ -245,6 +482,101 @@ TraceRecordManager::TraceRecordByteType TraceRecordManager::getByteType(duint ad
 void TraceRecordManager::increaseInstructionCounter()
 {
     InterlockedIncrement((volatile long*)&instructionCounter);
+}
+
+bool TraceRecordManager::enableRunTrace(bool enabled, const char* fileName)
+{
+    if(enabled)
+    {
+        if(rtEnabled)
+            enableRunTrace(false, NULL); //re-enable run trace
+        if(!DbgIsDebugging())
+            return false;
+        rtFile = CreateFileW(StringUtils::Utf8ToUtf16(fileName).c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_DELETE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        if(rtFile != INVALID_HANDLE_VALUE)
+        {
+            LARGE_INTEGER size;
+            if(GetFileSizeEx(rtFile, &size))
+            {
+                if(size.QuadPart != 0)
+                {
+                    SetFilePointer(rtFile, 0, 0, FILE_END);
+                }
+                else //file is empty, write some file header
+                {
+                    //TRAC, SIZE, JSON header
+                    json_t* root = json_object();
+                    json_object_set_new(root, "ver", json_integer(1));
+                    json_object_set_new(root, "arch", json_string(ArchValue("x86", "x64")));
+                    json_object_set_new(root, "hashAlgorithm", json_string("murmurhash"));
+                    json_object_set_new(root, "hash", json_hex(dbgfunctionsget()->DbGetHash()));
+                    json_object_set_new(root, "compression", json_string(""));
+                    char path[MAX_PATH];
+                    ModPathFromAddr(dbgdebuggedbase(), path, MAX_PATH);
+                    json_object_set_new(root, "path", json_string(path));
+                    char* headerinfo;
+                    headerinfo = json_dumps(root, JSON_COMPACT);
+                    size_t headerinfosize = strlen(headerinfo);
+                    LARGE_INTEGER header;
+                    DWORD written;
+                    header.LowPart = MAKEFOURCC('T', 'R', 'A', 'C');
+                    header.HighPart = headerinfosize;
+                    WriteFile(rtFile, &header, 8, &written, nullptr);
+                    if(written < 8) //read-only?
+                    {
+                        CloseHandle(rtFile);
+                        json_free(headerinfo);
+                        json_decref(root);
+                        dputs(QT_TRANSLATE_NOOP("DBG", "Run trace failed to start because file header cannot be written."));
+                        return false;
+                    }
+                    WriteFile(rtFile, headerinfo, headerinfosize, &written, nullptr);
+                    json_free(headerinfo);
+                    json_decref(root);
+                    if(written < headerinfosize) //disk-full?
+                    {
+                        CloseHandle(rtFile);
+                        dputs(QT_TRANSLATE_NOOP("DBG", "Run trace failed to start because file header cannot be written."));
+                        return false;
+                    }
+                }
+            }
+            rtPrevInstAvailable = false;
+            rtEnabled = true;
+            rtRecordedInstructions = 0;
+            rtNeedThreadId = true;
+            for(size_t i = 0; i < _countof(rtOldContextChanged); i++)
+                rtOldContextChanged[i] = true;
+            dprintf(QT_TRANSLATE_NOOP("DBG", "Run trace started. File: %s\r\n"), fileName);
+            Zydis cp;
+            unsigned char instr[MAX_DISASM_BUFFER];
+            auto cip = GetContextDataEx(hActiveThread, UE_CIP);
+            if(MemRead(cip, instr, MAX_DISASM_BUFFER))
+            {
+                cp.DisassembleSafe(cip, instr, MAX_DISASM_BUFFER);
+                TraceExecuteRecord(cp);
+            }
+            GuiOpenTraceFile(fileName);
+            return true;
+        }
+        else
+        {
+            String error = stringformatinline(StringUtils::sprintf("{winerror@%d}", GetLastError()));
+            dprintf(QT_TRANSLATE_NOOP("DBG", "Cannot create run trace file. GetLastError() = %s.\r\n"), error.c_str());
+            return false;
+        }
+    }
+    else
+    {
+        if(rtEnabled)
+        {
+            CloseHandle(rtFile);
+            rtPrevInstAvailable = false;
+            rtEnabled = false;
+            dputs(QT_TRANSLATE_NOOP("DBG", "Run trace stopped."));
+        }
+        return true;
+    }
 }
 
 void TraceRecordManager::saveToDb(JSON root)
@@ -366,25 +698,45 @@ unsigned int TraceRecordManager::getModuleIndex(const String & moduleName)
     }
 }
 
+bool TraceRecordManager::isRunTraceEnabled()
+{
+    return rtEnabled;
+}
+
 void _dbg_dbgtraceexecute(duint CIP)
 {
     if(TraceRecord.getTraceRecordType(CIP) != TraceRecordManager::TraceRecordType::TraceRecordNone)
     {
-        unsigned char buffer[MAX_DISASM_BUFFER];
-        if(MemRead(CIP, buffer, MAX_DISASM_BUFFER))
+        Zydis instruction;
+        unsigned char data[MAX_DISASM_BUFFER];
+        if(MemRead(CIP, data, MAX_DISASM_BUFFER))
         {
-            TraceRecord.increaseInstructionCounter();
-            Capstone instruction;
-            instruction.Disassemble(CIP, buffer, MAX_DISASM_BUFFER);
-            TraceRecord.TraceExecute(CIP, instruction.Size());
-        }
-        else
-        {
-            // if we reaches here, then the executable had executed an invalid address. Don't trace it.
+            instruction.DisassembleSafe(CIP, data, MAX_DISASM_BUFFER);
+            if(TraceRecord.isRunTraceEnabled())
+            {
+                TraceRecord.TraceExecute(CIP, instruction.Size());
+                TraceRecord.TraceExecuteRecord(instruction);
+            }
+            else
+            {
+                TraceRecord.TraceExecute(CIP, instruction.Size());
+            }
         }
     }
     else
-        TraceRecord.increaseInstructionCounter();
+    {
+        if(TraceRecord.isRunTraceEnabled())
+        {
+            Zydis instruction;
+            unsigned char data[MAX_DISASM_BUFFER];
+            if(MemRead(CIP, data, MAX_DISASM_BUFFER))
+            {
+                instruction.DisassembleSafe(CIP, data, MAX_DISASM_BUFFER);
+                TraceRecord.TraceExecuteRecord(instruction);
+            }
+        }
+    }
+    TraceRecord.increaseInstructionCounter();
 }
 
 unsigned int _dbg_dbggetTraceRecordHitCount(duint address)
@@ -405,4 +757,15 @@ bool _dbg_dbgsetTraceRecordType(duint pageAddress, TRACERECORDTYPE type)
 TRACERECORDTYPE _dbg_dbggetTraceRecordType(duint pageAddress)
 {
     return (TRACERECORDTYPE)TraceRecord.getTraceRecordType(pageAddress);
+}
+
+// When disabled, file name is not relevant and can be NULL
+bool _dbg_dbgenableRunTrace(bool enabled, const char* fileName)
+{
+    return TraceRecord.enableRunTrace(enabled, fileName);
+}
+
+bool _dbg_dbgisRunTraceEnabled()
+{
+    return TraceRecord.isRunTraceEnabled();
 }
